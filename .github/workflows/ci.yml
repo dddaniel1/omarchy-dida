@@ -1,26 +1,11 @@
-name: Plugin CI
-
-# The plugin's own workflow lives at plugin/.github/workflows/ci.yml, which GitHub
-# never runs: workflows only execute from the repository root, and the tree was
-# imported wholesale by `git subtree`. Rather than edit upstream's file (that would
-# conflict on every `git subtree pull`), this is the same three checks, pointed at the
-# `plugin/` prefix.
+name: CI
 
 on:
   push:
+    # dida365-first is the fork's working branch; drop it once it lands on main.
     branches: [main, dida365-first]
-    paths:
-      - "plugin/**"
-      - ".github/workflows/plugin-ci.yml"
   pull_request:
-    paths:
-      - "plugin/**"
-      - ".github/workflows/plugin-ci.yml"
   workflow_dispatch:
-
-defaults:
-  run:
-    working-directory: plugin
 
 jobs:
   helper:

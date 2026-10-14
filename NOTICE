@@ -1,0 +1,36 @@
+omarchy-dida — Dida 365
+=======================
+
+This repository is a fork of siam.ticktick by Ehsanul Haque Siam:
+
+    https://github.com/EhsanulHaqueSiam/omarchy-ticktick
+    imported at commit 4fbbbe8e46d4463b5f2d33e05cc3886d2826b15a
+
+Copyright (c) 2026 Ehsanul Haque Siam — the plugin, its architecture, its CLI, its test
+suite and the work behind all of it. MIT licence; see LICENSE, which is upstream's file
+and is kept unchanged.
+
+Changes in this fork, Copyright (c) 2026 Daniel:
+
+  - plugin id siam.ticktick -> dddaniel1.dida365; display name "Dida 365"
+    (manifest.json, qml/BarWidget.qml moduleName and ipcTarget, docs, tests)
+  - API default host -> api.dida365.com (Dida365); the international host is kept
+    reachable as api.INTL_BASE, and an existing sign-in's stored api_base still wins
+  - OAuth endpoints and the developer-console link now derive from the service a
+    sign-in targets (api.site_domain, auth.oauth_urls, auth.developer_console), so the
+    browser flow cannot open the wrong service's app roster
+  - authorize() takes api_base and records it, keeping the token and the host it was
+    minted against paired; `ticktick auth` gained --api-base to match `ticktick login`
+  - tests/test_services.py (12 tests) covering the service split
+  - the workspace: WORKSPACE.md, COMPARISON.md, AGENTS.md, and the sources/ trees
+
+sources/sotoaugusto-ticktick/ is a vendored copy of:
+
+    https://github.com/SotoAugusto/omarchy-ticktick
+    imported at commit 984fe2e215a155c1ad75865b657af3eeee913ad4
+
+Copyright (c) its respective authors, MIT licence; see its own LICENSE file. It is a
+reference copy and is not installed or loaded by the shell.
+
+Neither upstream is affiliated with, or endorses, this fork. Not affiliated with or
+endorsed by TickTick, Dida365 or Appest Inc.

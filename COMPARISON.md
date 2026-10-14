@@ -1,7 +1,12 @@
 # Comparison — the two upstream TickTick plugins
 
-Read from the vendored sources at the commits recorded in `README.md`. Line counts are
+Read from the vendored sources at the commits recorded in `WORKSPACE.md`. Line counts are
 `wc -l` over the imported trees.
+
+**Status: this fork now builds on `siam-ticktick`** — it is the plugin at the repository
+root, retargeted at Dida365 (plugin id `dddaniel1.dida365`, display name *Dida 365*). The
+tables below are the upstream baseline that fork started from, kept as the record of
+what each upstream does and does not do.
 
 ## At a glance
 
@@ -84,12 +89,12 @@ against that:
 
 ## Candidate directions
 
-1. **Fork siam-ticktick as the base**, make Dida365 the default rather than the flag,
-   and add soto's habits and focus timer on top. Keeps the CLI, the offline queue and
-   the tests.
+1. ~~**Fork siam-ticktick as the base**, make Dida365 the default rather than the flag~~
+   — **done**, see `NOTICE`. Next: add soto's habits and focus timer on top; the CLI,
+   the offline queue and the tests all stay.
 2. **Port the Raycast extension's API layer** — `raycast-dida` already wraps all 11
-   public endpoints with correct date/timezone handling; the plugin's Python API module
-   is where that would land.
+   public endpoints with correct date/timezone handling; `ticktick/api.py` is where that
+   would land.
 3. **Keep both trees vendored** and cherry-pick per feature, pulling upstream with
    `git subtree pull`.
 

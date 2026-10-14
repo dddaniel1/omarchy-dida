@@ -2,12 +2,18 @@
 
 ## Project boundaries
 
+- The plugin is at the **repository root** — `manifest.json`, `qml/`, `ticktick/`,
+  `bin/`, `tests/`. It must stay there: `omarchy plugin add` clones a repo and requires
+  `manifest.json` at the clone root, so nesting the plugin breaks the install and update
+  lifecycle.
 - `sources/` holds vendored upstream code, imported as `git subtree`s. Treat it as a
   reference copy: read it freely, but keep upstream changes coming in via
-  `git subtree pull` so history stays intact.
-- Before editing a vendored tree in place, decide whether the change belongs here or
-  upstream. If it belongs here, say so in the commit message and expect to resolve
-  conflicts on the next `git subtree pull`.
+  `git subtree pull` so history stays intact. Nothing in `sources/` is loaded by the
+  shell.
+- The fork diverged from `sources/siam-ticktick`, so a subtree pull into that prefix
+  does not update the plugin. Merge upstream changes by diffing the two trees by hand.
+- Before editing anything, decide whether the change belongs in the plugin, in a
+  vendored tree, or upstream. Only the plugin ships.
 - The target account is **Dida365** (`api.dida365.com`), not `api.ticktick.com`.
   Anything that hard-codes the international host is a bug for this repo.
 
