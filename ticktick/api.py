@@ -20,6 +20,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from datetime import datetime, timedelta
 from typing import Any
 
 from . import __version__
@@ -29,7 +30,7 @@ from .errors import ApiError, AuthError, NetworkError, NotFoundError
 # Some APIs reject the default "Python-urllib/3.x" UA outright; identify the plugin instead.
 USER_AGENT = (
     f"omarchy-ticktick/{__version__} "
-    "(+https://github.com/EhsanulHaqueSiam/omarchy-ticktick)"
+    "(+https://github.com/dddaniel1/omarchy-dida)"
 )
 
 # Backoff for idempotent GETs: 3 attempts total. The jitter is derived from the attempt
@@ -48,9 +49,34 @@ _THROTTLE_DELAYS = (2.0, 5.0, 12.0)
 _IDEMPOTENT_POSTS = ("/task/filter", "/task/completed", "/task/search")
 
 
+class FocusType:
+    """The `type` discriminator `/focus` requires on every call, including reads.
+
+    Pomodoro blocks and open-ended stopwatch sessions are separate records on the
+    server, addressed by this flag rather than by anything in the path.
+    """
+
+    POMODORO = 0
+    TIMING = 1
+
+
 def _seg(value: Any) -> str:
     """Quote one path segment. `safe=''` so an id containing '/' cannot change the endpoint."""
     return urllib.parse.quote(str(value), safe="")
+
+
+def _next_day_stamp(stamp: Any) -> int:
+    """The day after a `YYYYMMDD` stamp, so an inclusive bound can be sent exclusively.
+
+    Only used to translate for `/habit/checkins`, whose `to` excludes its own day. An
+    unparseable stamp is passed through unchanged: sending the caller's number is the
+    honest failure, and the alternative — inventing a day — would silently widen a range.
+    """
+    try:
+        day = datetime.strptime(str(int(stamp)), "%Y%m%d")
+    except (TypeError, ValueError):
+        return int(stamp) if isinstance(stamp, int) else 0
+    return int((day + timedelta(days=1)).strftime("%Y%m%d"))
 
 
 class _NoCrossHostRedirect(urllib.request.HTTPRedirectHandler):
@@ -443,6 +469,105 @@ class Client:
         data = self.request("GET", f"/project/{_seg(pid)}/column")
         return [c for c in data if isinstance(c, dict)] if isinstance(data, list) else []
 
+    # ----------------------------------------------------------------- habits
+    #
+    # Habits are on the documented Open API (unlike the web app's `/api/v2` private
+    # habit paths, which 404 against a bearer token), so nothing here needs a cookie
+    # session. The singular `/habit` is not a typo: `/habits` is a 404 on Dida365.
+    # The response is the raw `OpenHabit` shape, read straight into the cache.
+
+    def habits(self) -> list[dict]:
+        """`GET /habit` — every habit, archived ones included (`status != 0`)."""
+        data = self.request("GET", "/habit")
+        return [h for h in data if isinstance(h, dict)] if isinstance(data, list) else []
+
+    def habit_sections(self) -> list[dict]:
+        """`GET /habit/sections` — the folders habits group into.
+
+        Best-effort decoration: a failure here must not cost the caller its habits,
+        so this raises only on a bad token and answers `[]` otherwise.
+        """
+        try:
+            data = self.request("GET", "/habit/sections")
+        except AuthError:
+            raise
+        except (ApiError, NotFoundError, NetworkError):
+            return []
+        return [s for s in data if isinstance(s, dict)] if isinstance(data, list) else []
+
+    def habit_checkins(
+        self, habit_ids: list[str], start_stamp: int, end_stamp: int
+    ) -> list[dict]:
+        """`GET /habit/checkins` — check-ins for habits over an inclusive `YYYYMMDD` day range.
+
+        The endpoint's own `to` is **exclusive**, which is not what any caller means and
+        not what the documentation says. Verified against a live account: `from == to`
+        answers nothing at all, and a range ending on today omits today, while the same
+        range widened by a single day includes it. So the inclusive bound a caller passes
+        is sent as the following day, and both bounds mean what they say here.
+
+        The server also clamps a range over 30 days, and since that clamping is measured
+        against the *sent* `to`, a caller walking history has one day less per slice than
+        the raw API appears to offer — see `habits.MAX_WINDOW_DAYS`.
+
+        The answer is one document per habit, each carrying a `checkins` array; the `year`
+        on that document is not to be trusted (a live account returns `0`), so callers
+        must merge by `habitId` rather than keying on the year.
+        """
+        if not habit_ids:
+            return []
+        query = urllib.parse.urlencode(
+            {
+                "habitIds": ",".join(str(h) for h in habit_ids),
+                "from": int(start_stamp),
+                "to": _next_day_stamp(end_stamp),
+            }
+        )
+        data = self.request("GET", f"/habit/checkins?{query}")
+        return [c for c in data if isinstance(c, dict)] if isinstance(data, list) else []
+
+    def habit_checkin(self, habit_id: str, **fields: Any) -> dict:
+        """`POST /habit/{habitId}/checkin` — create or update one day's check-in.
+
+        Idempotent by `(habitId, stamp)`: the same body twice leaves one check-in, so
+        this is safe to replay from the outbox. `stamp` is required; `value`, `goal`,
+        `status`, `time` and `opTime` are optional and default server-side.
+        """
+        return self.request("POST", f"/habit/{_seg(habit_id)}/checkin", fields) or {}
+
+    # ------------------------------------------------------------------ focus
+    #
+    # There is no focus *preferences* endpoint: `POST /preference` returns only the
+    # account time zone. Pomodoro lengths are therefore the widget's own settings, not
+    # something the account supplies.
+
+    def focuses(self, start: str, end: str, focus_type: int = FocusType.POMODORO) -> list[dict]:
+        """`GET /focus` — focus records in a window, both ends as `yyyy-MM-ddTHH:mm:ssZ`.
+
+        The server silently rewrites a range longer than 30 days to the last 30, so
+        callers wanting history must page rather than ask for a year.
+        """
+        query = urllib.parse.urlencode(
+            {"from": start, "to": end, "type": int(focus_type)}
+        )
+        data = self.request("GET", f"/focus?{query}")
+        return [f for f in data if isinstance(f, dict)] if isinstance(data, list) else []
+
+    def create_focus(self, **fields: Any) -> dict:
+        """`POST /focus` — record a finished focus block. `type` is required.
+
+        Unlike the web app's `/batch/pomodoro`, this endpoint has no client-supplied
+        id, so a retry can create a second record. Callers that might replay (`focus
+        complete` out of the outbox) must de-duplicate on `startTime` first — see
+        `focus.already_recorded`.
+        """
+        return self.request("POST", "/focus", fields) or {}
+
+    def delete_focus(self, focus_id: str, focus_type: int = FocusType.POMODORO) -> None:
+        """`DELETE /focus/{id}` — `type` is required here, oddly, not optional."""
+        query = urllib.parse.urlencode({"type": int(focus_type)})
+        self.request("DELETE", f"/focus/{_seg(focus_id)}?{query}")
+
     def inbox_data(self) -> dict:
         """`GET /project/inbox/data` — the Inbox, which `GET /project` never lists.
 
@@ -500,4 +625,4 @@ def client_from_config(cfg: dict | None = None) -> Client:
     return Client(_config.token(cfg), base=resolve_base(cfg))
 
 
-__all__ = ["Client", "client_from_config", "USER_AGENT", "DEFAULT_BASE", "DIDA_BASE", "INTL_BASE", "resolve_base", "site_domain"]
+__all__ = ["Client", "client_from_config", "USER_AGENT", "FocusType", "DEFAULT_BASE", "DIDA_BASE", "INTL_BASE", "resolve_base", "site_domain"]

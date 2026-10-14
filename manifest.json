@@ -30,7 +30,13 @@
       "defaultProject": "",
       "showProjectChips": true,
       "includeUndated": false,
-      "confirmDelete": true
+      "confirmDelete": true,
+      "showHabits": true,
+      "showFocus": true,
+      "focusMinutes": 0,
+      "shortBreakMinutes": 0,
+      "longBreakMinutes": 0,
+      "longBreakInterval": 0
     },
     "schema": [
       {
@@ -139,6 +145,60 @@
         "label": "Confirm before deleting",
         "description": "Deleting a task is permanent and cannot be undone through the API.",
         "defaultValue": true
+      },
+      {
+        "key": "showHabits",
+        "type": "boolean",
+        "label": "Show habits",
+        "description": "A Habits view with today's check-in state, streaks, and a count in the bar.",
+        "defaultValue": true
+      },
+      {
+        "key": "showFocus",
+        "type": "boolean",
+        "label": "Show the focus timer",
+        "description": "A pomodoro strip in the panel, with a live countdown in the bar while a block runs.",
+        "defaultValue": true
+      },
+      {
+        "key": "focusMinutes",
+        "type": "integer",
+        "label": "Focus length (minutes)",
+        "description": "How long a focus block runs. 0 uses 25 minutes. The account has no focus settings of its own to defer to.",
+        "min": 0,
+        "max": 480,
+        "step": 5,
+        "defaultValue": 0
+      },
+      {
+        "key": "shortBreakMinutes",
+        "type": "integer",
+        "label": "Short break (minutes)",
+        "description": "The break after a focus block. 0 uses 5 minutes.",
+        "min": 0,
+        "max": 240,
+        "step": 5,
+        "defaultValue": 0
+      },
+      {
+        "key": "longBreakMinutes",
+        "type": "integer",
+        "label": "Long break (minutes)",
+        "description": "The break taken every few blocks. 0 uses 15 minutes.",
+        "min": 0,
+        "max": 480,
+        "step": 5,
+        "defaultValue": 0
+      },
+      {
+        "key": "longBreakInterval",
+        "type": "integer",
+        "label": "Long break every N blocks",
+        "description": "How many focus blocks earn a long break. 0 uses 4.",
+        "min": 0,
+        "max": 12,
+        "step": 1,
+        "defaultValue": 0
       }
     ]
   }

@@ -15,10 +15,11 @@ import argparse
 import json
 import re
 import sys
-from datetime import datetime, time as _time, timedelta, timezone
+import time
+from datetime import date as _date, datetime, time as _time, timedelta, timezone
 from typing import Any, Callable
 
-from . import __version__, api, auth, config, dates, nlp, render, store, views
+from . import __version__, api, auth, config, dates, focus, habits, nlp, render, store, views
 from .errors import (
     ApiError,
     AuthError,
@@ -295,6 +296,84 @@ def _build_parser() -> _Parser:
     p.add_argument("--project", default=None, metavar="ID",
                    help="restrict to one project id")
     p.add_argument("--limit", type=int, default=None, metavar="N")
+
+    p = cmd(
+        "habits",
+        "List habits with today's state: check-in progress, streaks and counts.",
+        _cmd_habits,
+    )
+    p.add_argument("--days", type=int, default=habits.HISTORY_DAYS, metavar="N",
+                   help="how much history to draw streaks from (default 60; the server "
+                        "caps a single request at 30, so longer windows are sliced)")
+    with_offline(p)
+    p.add_argument("--refresh", action="store_true",
+                   help="refetch even when the cache is fresh")
+    p.add_argument("--max-age", type=float, default=None, metavar="SECONDS",
+                   help="serve the cache when it is younger than this")
+
+    p = with_offline(cmd("checkin", "Tick or untick a habit for a day.", _cmd_checkin))
+    p.add_argument("habit", help="a habit id, or its name (a partial name works)")
+    p.add_argument("--value", type=float, default=None, metavar="N",
+                   help="set the day's progress outright; 0 clears it")
+    p.add_argument("--toggle", action="store_true",
+                   help="one click: advance a quantified habit by its step, finish or "
+                        "undo a boolean one (the default when neither flag is given)")
+    p.add_argument("--uncheck", action="store_true", help="clear the day")
+    p.add_argument("--date", default=None, metavar="WHEN",
+                   help="which day to write, in natural language (default today)")
+
+    p = cmd("focus", "Focus/pomodoro: the timer, and today's tally.", _cmd_focus_status)
+    p.add_argument("--history", type=int, default=0, metavar="DAYS",
+                   help="also report the last N days of focus totals")
+    p.add_argument("--refresh", action="store_true",
+                   help="refetch today's tally even when it is fresh")
+    p.add_argument("--max-age", type=float, default=None, metavar="SECONDS",
+                   help="serve the cached tally when it is younger than this")
+    fsub = p.add_subparsers(dest="action", required=False, metavar="<action>")
+
+    def focus_action(name: str, help_text: str, handler: Callable[..., Any]) -> _Parser:
+        child = fsub.add_parser(name, help=help_text, description=help_text, parents=[shared])
+        child.set_defaults(func=handler)
+        return child
+
+    def with_durations(child: _Parser) -> _Parser:
+        """The manifest's focus settings, handed over as flags. 0 means "default"."""
+        child.add_argument("--focus-minutes", type=int, default=0, metavar="N")
+        child.add_argument("--short-break", type=int, default=0, metavar="N")
+        child.add_argument("--long-break", type=int, default=0, metavar="N")
+        child.add_argument("--long-interval", type=int, default=0, metavar="N")
+        return child
+
+    starter = with_offline(
+        focus_action("start", "Start a block: focus unless --phase says otherwise.",
+                     _cmd_focus_start)
+    )
+    starter.add_argument("--phase", default=focus.FOCUS,
+                         choices=(focus.FOCUS, focus.SHORT_BREAK, focus.LONG_BREAK))
+    starter.add_argument("--task-id", default="", metavar="TASK_ID",
+                         help="attach the finished block to a task")
+    starter.add_argument("--note", default="", metavar="TEXT")
+    with_durations(starter)
+
+    for name, help_text, handler in (
+        ("pause", "Pause the running block.", _cmd_focus_pause),
+        ("resume", "Resume a paused block.", _cmd_focus_resume),
+        ("stop", "Discard the block. Nothing is recorded, which is the point.", _cmd_focus_stop),
+        ("complete", "Finish a block whose clock has run out, and record it.",
+         _cmd_focus_complete),
+    ):
+        with_offline(focus_action(name, help_text, handler))
+
+    logged = with_offline(
+        focus_action("log", "Record a block that happened outside the widget.",
+                     _cmd_focus_log)
+    )
+    logged.add_argument("--minutes", type=int, required=True, metavar="N")
+    logged.add_argument("--start", default=None, metavar="WHEN")
+    logged.add_argument("--end", default=None, metavar="WHEN")
+    logged.add_argument("--pause-seconds", type=int, default=0, metavar="N")
+    logged.add_argument("--task-id", default="", metavar="TASK_ID")
+    logged.add_argument("--note", default="", metavar="TEXT")
 
     p = with_offline(with_project(cmd("complete", "Mark a task done.", _cmd_complete)))
     p.add_argument("taskId")
@@ -617,6 +696,75 @@ def _read_source(
     info["pending"] = store.pending(state)
     info["age"] = round(store.age(state), 1) if state.get("fetched_at") else -1
     return store.CachedSource(state), info
+
+
+def _read_habits(
+    cfg: dict,
+    state: dict,
+    *,
+    offline: bool = False,
+    force: bool = False,
+    max_age: float = store.DEFAULT_MAX_AGE,
+    history_days: int = habits.HISTORY_DAYS,
+) -> tuple[Any, dict]:
+    """A habits source, refreshed when that is possible, cached otherwise.
+
+    The same shape as `_read_source`, and for the same reason: a read must never fail
+    into an empty list. Habits carry their own freshness stamp, so a task poll does not
+    disguise a stale habit list and vice versa.
+    """
+    client, info = _sync(cfg, state, offline=offline)
+    info["source"] = "cache"
+    stale = store.habits_age(state) >= max_age
+    info["stale"] = stale
+
+    if client is not None and (force or stale):
+        try:
+            _fetch_into_cache(client, state, history_days=history_days)
+            info["source"] = "network"
+            info["stale"] = False
+        except AuthError:
+            raise  # a bad token is the one failure the user has to act on
+        except (NetworkError, ApiError) as exc:
+            # `habits_fetched_at`, not the habit list: an account whose habits are all
+            # done, or that has no habits at all, has a perfectly good cache.
+            if not state.get("habits_fetched_at"):
+                raise
+            info["warning"] = info["warning"] or str(exc)
+
+    info["pending"] = store.pending(state)
+    age = store.habits_age(state)
+    info["age"] = round(age, 1) if age != float("inf") else -1
+    return store.CachedSource(state), info
+
+
+def _fetch_into_cache(client: Any, state: dict, *, history_days: int = habits.HISTORY_DAYS) -> None:
+    """Pull habits, sections and check-in history into the cache."""
+    snapshot = habits.fetch(client, history_days=history_days)
+    store.remember_habits(
+        state,
+        habits=snapshot.habits,
+        sections=snapshot.sections,
+        checkins=snapshot.documents,
+    )
+
+
+def _focus_settings(args: argparse.Namespace) -> focus.Prefs:
+    """Durations the widget asked for, or this module's defaults.
+
+    Settings come in as flags because widget settings are not visible to a CLI process;
+    the flags mirror the manifest schema one for one, and 0 means "use the default".
+    """
+    return focus.prefs(
+        getattr(args, "focus_minutes", 0),
+        getattr(args, "short_break", 0),
+        getattr(args, "long_break", 0),
+        getattr(args, "long_interval", 0),
+    )
+
+
+def _focus_now_ms() -> int:
+    return int(time.time() * 1000)
 
 
 #: Lives in `dates` now, where the rest of the zone handling is; `now()` needs the
@@ -1509,6 +1657,336 @@ def _cmd_project(args: argparse.Namespace) -> dict:
         }
     client.delete_project(args.id)
     return {"id": args.id, "deleted": True}
+
+
+# --- habits and focus --------------------------------------------------------
+
+
+def _cmd_habits(args: argparse.Namespace) -> dict:
+    """Today's habits, with the streaks the cached history supports."""
+    cfg = config.load()
+    state = store.load()
+    max_age = store.DEFAULT_MAX_AGE if args.max_age is None else args.max_age
+    source, info = _read_habits(
+        cfg, state, offline=args.offline, force=args.refresh,
+        max_age=max_age, history_days=args.days,
+    )
+    payload = habits.collect(habits.fetch(source, history_days=args.days))
+    store.save_quietly(state)
+    return {**payload, **info}
+
+
+def _checkin_day(text: str | None) -> _date:
+    """The calendar day a `--date` means. Natural language, local time, today by default."""
+    if not text:
+        return dates.now().date()
+    parsed = nlp.parse(text)
+    if parsed.due is None:
+        raise UsageError(f"could not understand {text!r} as a day")
+    return parsed.due.date()
+
+
+def _cmd_checkin(args: argparse.Namespace) -> dict:
+    """Write a habit day locally, then tell the account — in that order, on purpose."""
+    cfg = config.load()
+    state = store.load()
+    client, info = _sync(cfg, state, offline=args.offline, queueing=True)
+
+    # The habit has to be resolved before anything can be written, and an account that
+    # has never been read has no cache to resolve against. One fetch, only on that path.
+    if not state.get("habits") and client is not None:
+        try:
+            _fetch_into_cache(client, state)
+        except (NetworkError, ApiError) as exc:
+            info["warning"] = info["warning"] or str(exc)
+
+    try:
+        habit = habits.resolve(state.get("habits") or [], args.habit)
+    except KeyError:
+        raise UsageError(
+            f"no habit matching {args.habit!r} — run `ticktick habits` to see them"
+        ) from None
+
+    stamp = habits.stamp_of(_checkin_day(args.date))
+    habit_id = str(habit.get("id") or "")
+    # Replay the queue first: a click made offline a moment ago is the state this click
+    # is advancing from, and reading the cache alone would ignore it and step backwards.
+    existing = habits.checkin_for(
+        habits.merge_horizons(store.replayed_checkins(state)), habit_id, stamp
+    )
+
+    value = 0.0 if args.uncheck else args.value
+    # A bare `checkin` is a click, because that is what someone typing it means.
+    toggle = args.toggle or value is None
+    new_value, status = habits.next_checkin(habit, existing, value=value, toggle=toggle)
+
+    body = habits.checkin_payload(habit, stamp, new_value, status, when=dates.now())
+    entry = store.enqueue(
+        state,
+        {"op": "habit_checkin", "habitId": habit_id, "stamp": stamp, "checkin": body},
+    )
+    info.update(_push(client, state))
+    store.save_quietly(state)
+
+    return {
+        "habitId": habit_id,
+        "name": str(habit.get("name") or ""),
+        "stamp": stamp,
+        "value": new_value,
+        "goal": body["goal"],
+        "done": status == habits.CHECKIN_DONE,
+        # Whether *this* write is still in the queue, not whether the queue is empty.
+        "queued": any(
+            str(op.get("id") or "") == str(entry.get("id") or "")
+            for op in state.get("outbox") or []
+        ),
+        **info,
+    }
+
+
+def _focus_tally(
+    cfg: dict,
+    state: dict,
+    *,
+    client: Any,
+    info: dict,
+    force: bool = False,
+    max_age: float = store.DEFAULT_MAX_AGE,
+) -> dict:
+    """Today's focus totals, refreshed when that is possible, cached otherwise.
+
+    Reported with its own age, because an offline tally is the last thing the account
+    said and presenting it as live would quietly under-report a block finished in a
+    tunnel — one that is queued and not yet counted anywhere.
+
+    A burst of timer transitions must not each cost a request, so the cached tally is
+    served while it is fresh; only a poll older than `max_age` reaches the network.
+    """
+    day = dates.now()
+    stale = store.focus_age(state) >= max_age
+    if client is not None and (force or stale):
+        start, end = focus.window(day, _focus_now_ms())
+        try:
+            records = client.focuses(start, end, focus.TYPE_POMODORO)
+            store.remember_focus(state, records)
+            store.save_quietly(state)
+            info["tallySource"] = "network"
+        except (NetworkError, ApiError) as exc:
+            info["warning"] = info["warning"] or str(exc)
+    info.setdefault("tallySource", "cache")
+
+    records = store.CachedSource(state).focuses("", "", focus.TYPE_POMODORO)
+    tally = focus.summarise(records)
+    tally["date"] = day.date().isoformat()
+    tally["source"] = info["tallySource"]
+    age = store.focus_age(state)
+    tally["age"] = round(age, 1) if age != float("inf") else -1
+    if info.get("history"):
+        tally["history"] = _focus_history(client, state, days=int(info["history"]))
+    return tally
+
+
+def _focus_history(client: Any, state: dict, *, days: int) -> list[dict]:
+    """Per-day focus totals for the last `days` days, oldest first.
+
+    One window per day rather than one big range: the server clamps a range to 30 days
+    and the totals wanted are per-day anyway. A day that cannot be read is reported with
+    a null total rather than omitted, so the shape of the list never depends on whether
+    the network was there.
+    """
+    days = max(1, min(365, int(days)))
+    today = dates.now().date()
+    out: list[dict] = []
+    cached = store.CachedSource(state).focuses("", "", focus.TYPE_POMODORO)
+    for offset in range(days - 1, -1, -1):
+        day = today - timedelta(days=offset)
+        stamp = day.isoformat()
+        if client is None:
+            # Offline: only today's records are ever cached, so only today can be totalled.
+            same_day = [
+                r for r in cached
+                if str(r.get("startTime") or "")[:10] == stamp
+            ] if offset == 0 else []
+            out.append({"date": stamp, **focus.summarise(same_day), "source": "cache"})
+            continue
+        start = dates.format(_midnight_of(day))
+        end = dates.format(_midnight_of(day + timedelta(days=1)))
+        try:
+            records = client.focuses(start, end, focus.TYPE_POMODORO)
+        except (NetworkError, ApiError):
+            out.append({"date": stamp, "count": 0, "seconds": 0, "minutes": 0,
+                        "duration": 0, "source": "unavailable"})
+            continue
+        out.append({"date": stamp, **focus.summarise(records), "source": "network"})
+    return out
+
+
+def _midnight_of(day: _date) -> datetime:
+    """Local midnight of a calendar day, in this machine's own zone."""
+    return datetime.combine(day, _time(0, 0), tzinfo=dates.now().tzinfo)
+
+
+def _focus_payload(
+    cfg: dict,
+    state: dict,
+    *,
+    client: Any,
+    info: dict,
+    force: bool = False,
+    max_age: float = store.DEFAULT_MAX_AGE,
+) -> dict:
+    """The shape every `focus` action answers with, so QML parses exactly one."""
+    timer = focus.normalise(store.load_focus())
+    payload = focus.status(timer, now_ms=_focus_now_ms())
+    payload["today"] = _focus_tally(
+        cfg, state, client=client, info=info, force=force, max_age=max_age
+    )
+    return {**payload, **info}
+
+
+def _cmd_focus_status(args: argparse.Namespace) -> dict:
+    cfg = config.load()
+    state = store.load()
+    client, info = _sync(cfg, state, offline=getattr(args, "offline", False))
+    info["history"] = getattr(args, "history", 0)
+    return _focus_payload(
+        cfg, state, client=client, info=info,
+        force=getattr(args, "refresh", False),
+        max_age=store.DEFAULT_MAX_AGE if getattr(args, "max_age", None) is None else args.max_age,
+    )
+
+
+def _focus_transition(args: argparse.Namespace, action: str) -> dict:
+    """Apply one timer transition to the focus file, then report the new state.
+
+    Every transition is written to disk *before* anything is uploaded, and the upload
+    only ever happens in `complete`. That ordering is what makes the timer single-writer:
+    a bar surface is built per monitor, so several widgets read this file, but the CLI
+    is the only thing that moves it on.
+    """
+    cfg = config.load()
+    state = store.load()
+    client, info = _sync(cfg, state, offline=args.offline, queueing=True)
+
+    timer = focus.normalise(store.load_focus())
+    now_ms = _focus_now_ms()
+    record: dict | None = None
+
+    if action == "start":
+        timer = focus.start(
+            timer, now_ms=now_ms, settings=_focus_settings(args),
+            phase=args.phase, task_id=args.task_id, note=args.note,
+        )
+    elif action == "pause":
+        timer = focus.pause(timer, now_ms=now_ms)
+    elif action == "resume":
+        timer = focus.resume(timer, now_ms=now_ms)
+    elif action == "stop":
+        timer = focus.stop(timer)
+    elif action == "complete":
+        if not focus.settled(timer, now_ms=now_ms):
+            # Asked to complete a block that has not run out. Say so instead of
+            # recording minutes nobody worked; the timer is left exactly as it was.
+            return {
+                **_focus_payload(cfg, state, client=client, info=info),
+                "completed": False,
+                "secondsLeft": focus.status(timer, now_ms=now_ms)["secondsLeft"],
+            }
+        timer, record = focus.complete(timer, now_ms=now_ms)
+    else:  # pragma: no cover - argparse owns the choices
+        raise UsageError(f"unknown focus action {action!r}")
+
+    store.save_focus(timer)
+
+    if record is None:
+        payload = _focus_payload(cfg, state, client=client, info=info)
+        payload["completed"] = False
+        payload["queued"] = False
+        return payload
+
+    entry = store.enqueue(state, {"op": "focus", "record": record})
+    info.update(_push(client, state))
+    store.save_quietly(state)
+    # Forced, because the block that just landed is part of the tally this reports;
+    # serving a cached one would show the user their finished block not counting.
+    payload = _focus_payload(cfg, state, client=client, info=info, force=True)
+    payload["completed"] = True
+    payload["queued"] = any(
+        str(op.get("id") or "") == str(entry.get("id") or "")
+        for op in state.get("outbox") or []
+    )
+    return payload
+
+
+def _cmd_focus_start(args: argparse.Namespace) -> dict:
+    return _focus_transition(args, "start")
+
+
+def _cmd_focus_pause(args: argparse.Namespace) -> dict:
+    return _focus_transition(args, "pause")
+
+
+def _cmd_focus_resume(args: argparse.Namespace) -> dict:
+    return _focus_transition(args, "resume")
+
+
+def _cmd_focus_stop(args: argparse.Namespace) -> dict:
+    return _focus_transition(args, "stop")
+
+
+def _cmd_focus_complete(args: argparse.Namespace) -> dict:
+    return _focus_transition(args, "complete")
+
+
+def _cmd_focus_log(args: argparse.Namespace) -> dict:
+    """Record a block that happened outside the widget.
+
+    The timer is the usual way in; this is for everything else — backfilling a session
+    spent away from the machine, or a script logging what a phone timer did.
+    """
+    cfg = config.load()
+    state = store.load()
+    client, info = _sync(cfg, state, offline=args.offline, queueing=True)
+
+    minutes = max(1, int(args.minutes))
+    end = dates.parse(args.end) if args.end else dates.now()
+    if end is None:
+        raise UsageError(f"could not understand {args.end!r} as a time")
+    start = dates.parse(args.start) if args.start else end - timedelta(minutes=minutes)
+    if start is None:
+        raise UsageError(f"could not understand {args.start!r} as a time")
+    if start >= end:
+        raise UsageError("--start must come before --end")
+
+    pause_seconds = max(0, int(args.pause_seconds))
+    span = int((end - start).total_seconds())
+    record: dict[str, Any] = {
+        "type": focus.TYPE_POMODORO,
+        "startTime": _wire_date(start),
+        "endTime": _wire_date(end),
+        "duration": max(1, span - pause_seconds),
+        "pauseDuration": pause_seconds,
+    }
+    if args.task_id:
+        record["taskId"] = args.task_id
+    if args.note:
+        record["note"] = args.note
+
+    entry = store.enqueue(state, {"op": "focus", "record": record})
+    info.update(_push(client, state))
+    store.save_quietly(state)
+
+    payload = _focus_payload(cfg, state, client=client, info=info)
+    payload.update(
+        {
+            "logged": record,
+            "queued": any(
+                str(op.get("id") or "") == str(entry.get("id") or "")
+                for op in state.get("outbox") or []
+            ),
+        }
+    )
+    return payload
 
 
 def _cmd_parse(args: argparse.Namespace) -> dict:

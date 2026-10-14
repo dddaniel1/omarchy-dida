@@ -75,6 +75,12 @@ def _render(command: str, payload: dict, s: Style, width: int) -> str:
         return _projects(payload, s)
     if command == "tags":
         return _tags(payload, s)
+    if command == "habits":
+        return _habits(payload, s, width)
+    if command == "checkin":
+        return _checkin(payload, s)
+    if command == "focus":
+        return _focus(payload, s, width)
     if command == "status":
         return _status(payload, s)
     if command == "sync":
@@ -267,6 +273,111 @@ def _tags(payload: dict, s: Style) -> str:
             for kid in group:  # an orphan whose parent is gone still deserves a line
                 lines.append("  " + s(BLUE, "#" + _safe(kid.get("label") or kid.get("name"))))
     return "\n".join(lines)
+
+
+def _habits(payload: dict, s: Style, width: int) -> str:
+    """A habit list: one line each, with the streak and the day's tally."""
+    rows = payload.get("habits") or []
+    if not rows:
+        return s(DIM, "no habits")
+    counts = payload.get("counts") or {}
+    lines: list[str] = []
+    for habit in rows:
+        name = _safe(habit.get("name"))
+        done = habit.get("done") is True
+        # A non-due habit is dimmed rather than hidden: it is still real, it is just
+        # not on today's plate, and hiding it would make a weekly habit look deleted.
+        line = "  " + (s(GREEN, "✓") if done else s(DIM, "○")) + " " + name
+        if habit.get("quantified"):
+            line += s(DIM, f"  {_number(habit.get('value'))}/{_number(habit.get('goal'))}")
+            if habit.get("unit"):
+                line += s(DIM, f" {_safe(habit.get('unit'))}")
+        streak = int(habit.get("streak") or 0)
+        if streak > 1:
+            line += s(YELLOW, f"  {streak}d")
+        if not habit.get("due"):
+            line += s(DIM, "  (not today)")
+        lines.append(line)
+    remaining = counts.get("remaining", 0)
+    footer = f"{counts.get('done', 0)} of {counts.get('due', 0)} done"
+    if remaining:
+        footer += f", {remaining} left"
+    best = counts.get("streakBest", 0)
+    if best:
+        footer += f"  best streak {best}d"
+    lines.append(s(DIM, "  " + footer))
+    return "\n".join(lines)
+
+
+def _checkin(payload: dict, s: Style) -> str:
+    name = _safe(payload.get("name") or payload.get("habitId"))
+    value = _to_number(payload.get("value"))
+    goal = _to_number(payload.get("goal"))
+    mark = s(GREEN, "✓ ") if payload.get("done") else s(DIM, "○ ")
+    tally = f"  {_number(value)}/{_number(goal)}" if goal > 1 else ""
+    text = mark + name + s(DIM, tally)
+    if payload.get("done"):
+        text += s(GREEN, "  done")
+    elif value:
+        text += s(DIM, "  partial")
+    else:
+        text += s(DIM, "  cleared")
+    return text + _pending(payload, s)
+
+
+def _focus(payload: dict, s: Style, width: int) -> str:
+    """The timer line, today's tally, and optionally the days before it."""
+    lines: list[str] = []
+    phase = str(payload.get("phase") or "idle")
+    clock = payload.get("clock") or ""
+    if phase == "idle":
+        lines.append(s(DIM, "no block running"))
+    else:
+        label = _safe(payload.get("label") or phase)
+        state = s(YELLOW, "paused") if payload.get("paused") else s(GREEN, "running")
+        lines.append(f"  {s(BLUE, clock)}  {label}  {state}")
+        blocks = int(payload.get("blocksDone") or 0)
+        if blocks:
+            lines.append(s(DIM, f"  {blocks} block{'' if blocks == 1 else 's'} done this session"))
+
+    today = payload.get("today") or {}
+    tally = f"  today: {today.get('count', 0)} block(s), {today.get('minutes', 0)}m"
+    if today.get("source") != "network":
+        # An offline tally is the last thing the account said, and saying so is the
+        # difference between a stale number and a wrong one.
+        age = today.get("age", -1)
+        tally += s(DIM, f"  (cached{f', {age}s old' if isinstance(age, (int, float)) and age >= 0 else ''})")
+    lines.append(tally)
+
+    prefs = payload.get("prefs") or {}
+    lines.append(
+        s(DIM, f"  {prefs.get('focus', 0)}m focus · {prefs.get('shortBreak', 0)}m short · "
+               f"{prefs.get('longBreak', 0)}m long every {prefs.get('longInterval', 0)}")
+    )
+
+    for day in today.get("history") or []:
+        mark = s(GREEN, "●") if day.get("count") else s(DIM, "·")
+        source = "" if day.get("source") == "network" else s(DIM, "  (approx)")
+        lines.append(
+            f"  {mark} {_safe(day.get('date'))}  {day.get('count', 0)} block(s), "
+            f"{day.get('minutes', 0)}m{source}"
+        )
+    return "\n".join(lines)
+
+
+def _to_number(value: Any) -> float:
+    """A number for arithmetic. 0 for anything that is not one, never an exception."""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    return 0.0 if number != number else number  # NaN
+
+
+def _number(value: Any) -> str:
+    """A number for display: 1 rather than 1.0, but never a traceback."""
+    number = _to_number(value)
+    return str(int(number)) if number == int(number) else f"{number:g}"
 
 
 def _status(payload: dict, s: Style) -> str:

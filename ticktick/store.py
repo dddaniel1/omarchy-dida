@@ -49,6 +49,7 @@ try:  # POSIX only; the merge in `save` is what actually preserves concurrent wo
 except ImportError:  # pragma: no cover - Omarchy is Linux, but do not hard-fail
     fcntl = None  # type: ignore[assignment]
 
+from . import focus as _focus
 from .errors import ApiError, AuthError, NetworkError, NotFoundError, UsageError
 
 _XDG_STATE = os.environ.get("XDG_STATE_HOME") or ""
@@ -78,7 +79,17 @@ MAX_OUTBOX = 500
 LOCAL_PREFIX = "local-"
 
 #: Operations the outbox knows how to replay, in the order this module applies them.
-OPS = ("create", "update", "move", "complete", "delete")
+#:
+#: `habit_checkin` and `focus` are not task mutations — they write a habit day and the
+#: account's focus log — but they ride this queue for the same reason everything else
+#: does: a click is applied locally, sent when it can be, and never lost to a tunnel.
+OPS = ("create", "update", "move", "complete", "delete", "habit_checkin", "focus")
+
+#: The focus timer's own file. It is the one piece of genuine *state* in this package
+#: rather than a cache, and a poll's read-modify-write of `state.json` must never be
+#: able to roll a running block back to what it looked like a moment ago, so it is kept
+#: strictly apart.
+FOCUS_PATH: pathlib.Path = STATE_DIR / "focus.json"
 
 
 def is_local_id(task_id: Any) -> bool:
@@ -102,6 +113,14 @@ def blank() -> dict:
         "tasks": [],
         "projects": [],
         "groups": [],
+        # Habits are cached exactly the way tasks are: the raw payloads of the last
+        # good fetch, re-derived into rows and streaks on every read.
+        "habits": [],
+        "habit_sections": [],
+        "checkins": [],
+        "habits_fetched_at": 0.0,
+        "focus_records": [],
+        "focus_records_at": 0.0,
         "outbox": [],
         "retry_after": 0.0,
         "last_error": "",
@@ -127,6 +146,19 @@ def load() -> dict:
     state["tasks"] = [t for t in _list(state.get("tasks")) if isinstance(t, dict)]
     state["projects"] = [p for p in _list(state.get("projects")) if isinstance(p, dict)]
     state["groups"] = [g for g in _list(state.get("groups")) if isinstance(g, dict)]
+    state["habits"] = [h for h in _list(state.get("habits")) if isinstance(h, dict)]
+    state["habit_sections"] = [
+        s for s in _list(state.get("habit_sections")) if isinstance(s, dict)
+    ]
+    # Check-in *documents*, not a merged map: the API answers one document per habit
+    # (and per year), the `year` on it is not trustworthy, and folding them together is
+    # `habits.merge_horizons`'s job at read time.
+    state["checkins"] = [c for c in _list(state.get("checkins")) if isinstance(c, dict)]
+    state["focus_records"] = [
+        f for f in _list(state.get("focus_records")) if isinstance(f, dict)
+    ]
+    state["habits_fetched_at"] = _float(state.get("habits_fetched_at"))
+    state["focus_records_at"] = _float(state.get("focus_records_at"))
     state["outbox"] = [op for op in _list(state.get("outbox")) if _valid_op(op)]
     state["fetched_at"] = _float(state.get("fetched_at"))
     # Clamped here, where every process passes, rather than where it is read: it is an
@@ -246,6 +278,30 @@ def save_quietly(state: dict) -> bool:
         return False
 
 
+def _write_private(path: pathlib.Path, payload: dict) -> None:
+    """Atomic, 0600 JSON write. Same directory, so the replace is a rename.
+
+    Shares `save`'s discipline without sharing its body: `save` has to merge a
+    concurrent writer's outbox under a lock, and the timer file has no such problem —
+    one writer, one record — so folding them together would only make both harder to
+    reason about.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    fd, tmp = tempfile.mkstemp(
+        dir=str(path.parent), prefix="." + path.name + "-", suffix=".tmp"
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(payload, fh, ensure_ascii=False, default=str)
+            fh.flush()
+            os.fsync(fh.fileno())  # the rename is only atomic for data that landed
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, path)
+    except BaseException:
+        pathlib.Path(tmp).unlink(missing_ok=True)
+        raise
+
+
 # --- cache -------------------------------------------------------------------
 
 
@@ -294,6 +350,58 @@ def remember(
     state["last_error"] = ""
 
 
+def remember_habits(
+    state: dict,
+    habits: list | None = None,
+    sections: list | None = None,
+    checkins: list | None = None,
+    *,
+    now: float | None = None,
+) -> None:
+    """Replace the habit cache with a fresh fetch. `None` means "did not ask".
+
+    A skipped field keeps what is cached rather than blanking it, the same rule
+    `remember` applies to project groups: a command that refreshed only the habit list
+    must not wipe the check-in history every streak is drawn from.
+    """
+    if habits is not None:
+        state["habits"] = [h for h in _list(habits) if isinstance(h, dict)]
+    if sections is not None:
+        state["habit_sections"] = [s for s in _list(sections) if isinstance(s, dict)]
+    if checkins is not None:
+        state["checkins"] = [c for c in _list(checkins) if isinstance(c, dict)]
+    state["habits_fetched_at"] = time.time() if now is None else now
+
+
+def remember_focus(state: dict, records: list, *, now: float | None = None) -> None:
+    """Cache the focus records a window read returned, for an offline tally."""
+    state["focus_records"] = [f for f in _list(records) if isinstance(f, dict)]
+    state["focus_records_at"] = time.time() if now is None else now
+
+
+def habits_age(state: dict, *, now: float | None = None) -> float:
+    """Seconds since habits were last fetched; infinite when they never were.
+
+    Kept apart from `age`, which is the *task* cache's clock: a task poll must not
+    make the habit cache look fresh, and refreshing habits must not make a stale task
+    list look current.
+    """
+    fetched = _float(state.get("habits_fetched_at"))
+    if fetched <= 0:
+        return float("inf")
+    elapsed = (time.time() if now is None else now) - fetched
+    return elapsed if elapsed >= 0 else float("inf")
+
+
+def focus_age(state: dict, *, now: float | None = None) -> float:
+    """Seconds since the focus tally was last fetched; infinite when it never was."""
+    fetched = _float(state.get("focus_records_at"))
+    if fetched <= 0:
+        return float("inf")
+    elapsed = (time.time() if now is None else now) - fetched
+    return elapsed if elapsed >= 0 else float("inf")
+
+
 def replay(state: dict) -> list[dict]:
     """The cached tasks with every queued mutation applied on top.
 
@@ -307,11 +415,63 @@ def replay(state: dict) -> list[dict]:
     return tasks
 
 
+def replayed_checkins(state: dict) -> list[dict]:
+    """The cached check-in documents with any queued check-in folded in.
+
+    Pending entries are appended as their own documents, so the read-time merge — which
+    lets the last document win per day — sees them last and the user's own click is
+    what survives a refresh that has not caught up with it yet. Deriving them from the
+    queue rather than writing them into the cache keeps one source of truth.
+    """
+    documents = [dict(c) for c in state.get("checkins") or []]
+    pending: dict[str, dict[int, dict]] = {}
+    for op in state.get("outbox") or []:
+        if str(op.get("op") or "") != "habit_checkin":
+            continue
+        habit_id = str(op.get("habitId") or "")
+        checkin = dict(op.get("checkin") or {})
+        day = _int(checkin.get("stamp"))
+        if not habit_id or not day:
+            continue
+        pending.setdefault(habit_id, {})[day] = checkin
+    for habit_id, days in pending.items():
+        documents.append({"habitId": habit_id, "checkins": list(days.values())})
+    return documents
+
+
 def apply_local(state: dict, op: dict) -> None:
     """Fold one mutation into the cache immediately, before it is sent anywhere."""
+    if str(op.get("op") or "") in ("habit_checkin", "focus"):
+        # Nothing to fold into the *task* cache. A check-in is already visible because
+        # `replayed_checkins` derives it from the queue, and a focus record has no
+        # local representation at all — the tally shown is the account's.
+        return
     tasks = [dict(t) for t in state.get("tasks") or []]
     _apply(tasks, op)
     state["tasks"] = tasks
+
+
+def load_focus() -> dict:
+    """The focus timer's state, or `{}`. Total, like `load`: corrupt means idle.
+
+    An empty dict rather than a blank state because the shape belongs to `focus`, not
+    to this module: the CLI normalises whatever comes back, so a half-written file
+    degrades to an idle timer rather than a traceback in the bar.
+    """
+    try:
+        data: Any = json.loads(FOCUS_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError, UnicodeDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def save_focus(payload: dict) -> bool:
+    """Write the timer state atomically and privately; False when it cannot be written."""
+    try:
+        _write_private(FOCUS_PATH, payload)
+        return True
+    except OSError:
+        return False
 
 
 # --- outbox ------------------------------------------------------------------
@@ -523,6 +683,52 @@ class CachedSource:
         ]
         return {"project": None, "tasks": tasks, "columns": []}
 
+    # --- habits ---------------------------------------------------------------
+    #
+    # The same three methods `habits.fetch` calls on a live `Client`, answered from the
+    # cache with the outbox already folded in, so a habit list looks the same online and
+    # off — a check-in made in a tunnel is visible before the server has heard of it.
+
+    def habits(self) -> list[dict]:
+        return [dict(h) for h in self._state.get("habits") or []]
+
+    def habit_sections(self) -> list[dict]:
+        return [dict(s) for s in self._state.get("habit_sections") or []]
+
+    def habit_checkins(
+        self, habit_ids: list[str], start_stamp: int, end_stamp: int
+    ) -> list[dict]:
+        """The cached range, filtered to the habits and days asked for.
+
+        `habits.fetch` walks history in 30-day slices and merges whatever comes back,
+        so a slice the cache can only partly answer is answered partly — an empty list
+        for a slice that predates the cache is the honest answer, not an error.
+        """
+        wanted = {str(h) for h in habit_ids or []}
+        documents: list[dict] = []
+        for document in replayed_checkins(self._state):
+            habit_id = str(document.get("habitId") or "")
+            if wanted and habit_id not in wanted:
+                continue
+            days = [
+                entry
+                for entry in document.get("checkins") or []
+                if _within(entry, start_stamp, end_stamp)
+            ]
+            if days:
+                documents.append({"habitId": habit_id, "checkins": days})
+        return documents
+
+    def focuses(self, start: str, end: str, focus_type: int = 0) -> list[dict]:
+        """The cached focus records.
+
+        Not filtered by the window: only one window is ever cached — today, pomodoro —
+        which is the only one the widget asks for. A caller wanting another range gets
+        today's records and should treat them as approximate, which is why the tally is
+        reported with its age rather than as live.
+        """
+        return [dict(f) for f in self._state.get("focus_records") or []]
+
 
 # --- internals ---------------------------------------------------------------
 
@@ -652,7 +858,45 @@ def _send(entry: dict, client: Any, idmap: dict[str, str], state: dict) -> None:
         client.delete_task(pid, tid)
         return
 
+    if kind == "habit_checkin":
+        habit_id = str(entry.get("habitId") or "")
+        body = {k: v for k, v in dict(entry.get("checkin") or {}).items()}
+        if not habit_id or not body:
+            raise UsageError("queued check-in has no habit to write to")
+        # `POST /habit/{id}/checkin` upserts on `(habit, stamp)`, so replaying this is
+        # harmless: the body describes the day's final state, not a delta.
+        client.habit_checkin(habit_id, **body)
+        return
+
+    if kind == "focus":
+        body = dict(entry.get("record") or {})
+        if _focus_already_there(client, body):
+            # An earlier attempt landed and its answer did not. This endpoint takes no
+            # client-supplied id, so a look-before-writing is the only way to keep a
+            # replay from recording the same block a second time.
+            return
+        client.create_focus(**body)
+        return
+
     raise UsageError(f"unknown queued operation {kind!r}")
+
+
+def _focus_already_there(client: Any, body: dict) -> bool:
+    """Whether this focus block is already on the account. False when undecidable.
+
+    An unreachable or unhappy read means "not known to be there": a duplicated block is
+    a blemish in the statistics, while silently dropping one the user actually worked is
+    worse, so the doubt resolves towards sending it.
+    """
+    start = str(body.get("startTime") or "")
+    end = str(body.get("endTime") or "")
+    if not start or not end:
+        return False
+    try:
+        records = client.focuses(start, end, _int(body.get("type")))
+    except (ApiError, AuthError, NetworkError, NotFoundError):
+        return False
+    return _focus.already_recorded(records, start)
 
 
 def _wire_items(raw: Any) -> list[dict]:
@@ -727,11 +971,35 @@ def _replace_task(state: dict, task_id: str, fresh: dict) -> None:
 
 def _valid_op(op: Any) -> bool:
     """Whether an outbox entry is one this module can still replay."""
-    if not isinstance(op, dict) or str(op.get("op") or "") not in OPS:
+    if not isinstance(op, dict):
         return False
-    if op["op"] == "create":
+    kind = str(op.get("op") or "")
+    if kind not in OPS:
+        return False
+    if kind == "create":
         return isinstance(op.get("task"), dict)
+    if kind == "habit_checkin":
+        # Addressed by habit and day rather than by a task id, and the pair is exactly
+        # what makes the write idempotent, so both have to be there to replay it.
+        return bool(str(op.get("habitId") or "")) and bool(_int(op.get("stamp")))
+    if kind == "focus":
+        return isinstance(op.get("record"), dict)
     return bool(str(op.get("taskId") or ""))
+
+
+def _within(entry: Any, start_stamp: Any, end_stamp: Any) -> bool:
+    """Whether a check-in falls inside a `YYYYMMDD` range, ends inclusive."""
+    if not isinstance(entry, dict):
+        return False
+    day = _int(entry.get("stamp"))
+    if not day:
+        return False
+    low, high = _int(start_stamp), _int(end_stamp)
+    if low and day < low:
+        return False
+    if high and day > high:
+        return False
+    return True
 
 
 def _list(value: Any) -> list:
@@ -755,9 +1023,11 @@ def _int(value: Any) -> int:
 __all__ = [
     "STATE_DIR",
     "STATE_PATH",
+    "FOCUS_PATH",
     "STATE_VERSION",
     "DEFAULT_MAX_AGE",
     "LOCAL_PREFIX",
+    "OPS",
     "CachedSource",
     "age",
     "apply_local",
@@ -765,14 +1035,21 @@ __all__ = [
     "blocked_for",
     "enqueue",
     "flush",
+    "focus_age",
+    "habits_age",
     "hold_off",
     "is_fresh",
     "is_local_id",
     "load",
+    "load_focus",
     "new_local_id",
     "pending",
     "remember",
+    "remember_focus",
+    "remember_habits",
     "replay",
+    "replayed_checkins",
     "save",
+    "save_focus",
     "save_quietly",
 ]
