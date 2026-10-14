@@ -869,10 +869,10 @@ Panel {
             Text {
               anchors.verticalCenter: parent.verticalCenter
               text: tt.focusActive
-                ? (Model.focusPhaseLabel((tt.focus || {}).phase)
+                ? (Model.focusPhaseLabel((tt.focusState || {}).phase)
                    + (tt.focusPaused ? " · paused" : "")
                    + (tt.focusBlocksDone > 0 ? " · " + tt.focusBlocksDone + " done" : ""))
-                : Model.focusPrefsLabel((tt.focus || {}).prefs)
+                : Model.focusPrefsLabel((tt.focusState || {}).prefs)
               color: widget.dim
               font.family: widget.fontFamily
               font.pixelSize: Style.font.bodySmall

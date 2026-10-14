@@ -25,7 +25,9 @@ Item {
   // The focus timer. `focusEndsAt` is an absolute deadline in epoch ms, which is what
   // lets the countdown survive a reload and stay identical on every monitor: each
   // surface ticks locally against the same instant the CLI wrote down.
-  property var focus: ({})
+  // `focusState`, not `focus`: `Item.focus` is FINAL on a QObject, and
+  // overriding a FINAL property fails the whole widget at load time rather than warning.
+  property var focusState: ({})
   property var focusTally: ({})
   property real focusEndsAt: 0
   property bool focusPaused: false
@@ -679,7 +681,7 @@ Item {
 
   function applyFocus(payload) {
     var body = root.bodyOf(payload)
-    root.focus = Util.isPlainObject(body) ? body : ({})
+    root.focusState = Util.isPlainObject(body) ? body : ({})
     root.focusEndsAt = Number(body.endsAt || 0)
     root.focusPaused = body.paused === true
     root.focusPausedLeft = Math.max(0, Number(body.secondsLeft || 0))
