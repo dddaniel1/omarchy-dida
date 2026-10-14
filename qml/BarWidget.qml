@@ -80,15 +80,21 @@ Panel {
 
   // TickTick's own smart lists, in its own sidebar order, plus the user's lists.
   // The number keys follow this order, so it is the one place it is written down.
-  readonly property var viewOptions: [
-    { value: "today", label: "Today" },
-    { value: "tomorrow", label: "Tomorrow" },
-    { value: "next", label: "Next 7" },
-    { value: "inbox", label: "Inbox" },
-    { value: "all", label: "All" },
-    { value: "project", label: "Lists" },
-    { value: "completed", label: "Done" }
-  ]
+  readonly property var viewOptions: {
+    var out = [
+      { value: "today", label: "Today" },
+      { value: "tomorrow", label: "Tomorrow" },
+      { value: "next", label: "Next 7" },
+      { value: "inbox", label: "Inbox" },
+      { value: "all", label: "All" },
+      { value: "project", label: "Lists" },
+      { value: "completed", label: "Done" }
+    ]
+    // Only offered when the section is switched on, so the tab strip, the number keys
+    // and the bar badge all disappear together rather than disagreeing.
+    if (tt.showHabits) out.push({ value: "habits", label: "Habits" })
+    return out
+  }
   readonly property var views: {
     var out = []
     for (var i = 0; i < viewOptions.length; i++) out.push(viewOptions[i].value)
@@ -98,7 +104,14 @@ Panel {
   // The Lists tab shows the list of lists until one is picked; after that it is
   // an ordinary task list scoped to that list.
   readonly property bool pickingProject: tt.view === "project" && tt.projectFilter === ""
-  readonly property var rows: pickingProject ? sortedProjects : (tt.tasks || [])
+  readonly property bool showingHabits: tt.view === "habits"
+  // Habits join the same cursor, section and delegate machinery the tasks use, rather
+  // than getting a list of their own: one cursor, one set of keys, one way to draw a row.
+  readonly property var rows: {
+    if (showingHabits) return tt.habits || []
+    if (pickingProject) return sortedProjects
+    return tt.tasks || []
+  }
   readonly property int rowCount: rows.length
 
   // Folders, the way TickTick's sidebar shows them: loose lists first (the Inbox is
@@ -157,7 +170,7 @@ Panel {
     return "Nothing due"
   }
 
-  readonly property string badgeText: tt.authed ? String(tt.badgeCount) : "!"
+  readonly property string badgeText: tt.authed ? Model.barLabel(tt.badgeCount, tt.habitBadge) : "!"
 
   // --- helpers ----------------------------------------------------------
 
@@ -173,7 +186,14 @@ Panel {
   }
 
   function selectedTask() {
-    if (pickingProject) return null
+    // Habits and the list picker share this cursor, so neither may be handed back as
+    // a task: a caller that completed or deleted one would be addressing the wrong row.
+    if (pickingProject || showingHabits) return null
+    return (cursorIndex >= 0 && cursorIndex < rowCount) ? rows[cursorIndex] : null
+  }
+
+  function selectedHabit() {
+    if (!showingHabits) return null
     return (cursorIndex >= 0 && cursorIndex < rowCount) ? rows[cursorIndex] : null
   }
 
@@ -217,6 +237,8 @@ Panel {
     cursorIndex = 0
     expandedId = ""
     if (listFlick) listFlick.contentY = 0
+    // Habits are not on the task poll, so entering their view is what asks for them.
+    if (name === "habits") tt.loadHabits()
   }
 
   // The section a row opens, or "" when the row above already opened it. What the
@@ -226,6 +248,15 @@ Panel {
   function sectionFor(index) {
     var list = rows
     if (index < 0 || index >= list.length) return ""
+    if (widget.showingHabits) {
+      // Habits are grouped by the section the account files them under, which is the
+      // same thing TickTick's own habit list shows. An unfiled habit gets no heading
+      // rather than an empty one.
+      var name = Model.squish(list[index].section)
+      if (name === "") return ""
+      if (index > 0 && Model.squish(list[index - 1].section) === name) return ""
+      return name.toUpperCase()
+    }
     if (pickingProject) {
       var name = widget.groupNameOf(list[index])
       if (index > 0 && widget.groupNameOf(list[index - 1]) === name) return ""
@@ -401,6 +432,10 @@ Panel {
     adding = false
     searching = tt.search !== ""
     if (listFlick) listFlick.contentY = 0
+    // Opening is when the two things the task poll does not carry are worth asking
+    // for: the habit list, and today's focus tally.
+    if (tt.view === "habits") tt.loadHabits()
+    tt.loadFocus()
     tt.refresh()
     tt.loadTags()  // cheap, and a tag created elsewhere should be filterable here
     Qt.callLater(function () { keyCatcher.forceActiveFocus() })
@@ -455,11 +490,14 @@ Panel {
     id: button
     anchors.fill: parent
     bar: widget.bar
-    // A vertical bar has no room for a number beside the glyph.
-    text: (bar && bar.vertical) ? "󰄲" : "󰄲 " + widget.badgeText
+    // A vertical bar has no room for a number beside the glyph. A running focus block
+    // outranks the task count: it is the thing with seconds on it.
+    readonly property bool showingClock: tt.showFocus && tt.focusClockText !== ""
+    text: (bar && bar.vertical) ? "󰄲"
+      : "󰄲 " + (showingClock ? tt.focusClockText : widget.badgeText)
     fontSize: Style.font.caption
     horizontalMargin: 6
-    active: tt.authed && Number((tt.counts || {}).overdue || 0) > 0
+    active: tt.authed && (showingClock || Number((tt.counts || {}).overdue || 0) > 0)
     activeColor: widget.urgent
     tooltipText: "TickTick — " + widget.summary
     onPressed: function (buttonCode) {
@@ -510,6 +548,10 @@ Panel {
         onReturnRequested: {
           widget._returnConsumed = true
           if (!tt.authed) return
+          if (widget.showingHabits) {
+            tt.checkInHabit(widget.selectedHabit())
+            return
+          }
           if (widget.pickingProject) {
             var project = widget.selectedProject()
             if (project) tt.setProjectFilter(String(project.id || ""))
@@ -522,7 +564,8 @@ Panel {
         // flag is how Space keeps "expand" to itself.
         onActivateRequested: {
           if (widget._returnConsumed) { widget._returnConsumed = false; return }
-          if (!tt.authed || widget.pickingProject) return
+          // A habit has nothing to expand: its whole state is already on the row.
+          if (!tt.authed || widget.pickingProject || widget.showingHabits) return
           var task = widget.selectedTask()
           if (task) widget.toggleExpanded(task.id)
         }
@@ -537,7 +580,7 @@ Panel {
           if (!tt.authed) return
           // The number keys walk `viewOptions` in order, so the tab strip and the
           // shortcuts cannot drift apart when a view is added or reordered.
-          var digit = "1234567".indexOf(text)
+          var digit = "12345678".indexOf(text)
           if (digit >= 0 && digit < widget.views.length) {
             widget.setView(widget.views[digit])
             return
@@ -552,10 +595,16 @@ Panel {
           case "o": case "O": tt.cycleSort(); break
           case "f": case "F": widget.toggleFilters(); break
           case "d": case "D":
-            if (!widget.pickingProject) widget.requestDelete(widget.selectedTask())
+            if (!widget.pickingProject && !widget.showingHabits) widget.requestDelete(widget.selectedTask())
             break
-          case "p": case "P":
-            if (!widget.pickingProject) widget.cyclePriority(widget.selectedTask())
+          case "p":
+            // Plain `p` stays with task priority: these views had it before there was
+            // a timer to start, and taking a working key away is worse than adding one.
+            if (!widget.pickingProject && !widget.showingHabits) widget.cyclePriority(widget.selectedTask())
+            break
+          // Shift-P drives the focus timer — start, pause, resume.
+          case "P":
+            if (tt.showFocus) tt.toggleFocus()
             break
           }
         }
@@ -707,7 +756,9 @@ Panel {
 
           Row {
             id: filterBar
-            visible: tt.authed && widget.filtering
+            // A task filter has nothing to say about habits, so the bar stays out of
+            // the way rather than filtering a list it cannot match.
+            visible: tt.authed && widget.filtering && !widget.showingHabits
             width: parent.width
             spacing: Style.spacing.md
 
@@ -758,7 +809,7 @@ Panel {
 
           TextField {
             id: searchField
-            visible: tt.authed && (widget.searching || tt.search !== "")
+            visible: tt.authed && (widget.searching || tt.search !== "") && !widget.showingHabits
             width: parent.width
             placeholderText: "Search tasks…"
             foreground: widget.foreground
@@ -794,6 +845,94 @@ Panel {
             wrapMode: Text.WordWrap
           }
 
+          // ---- the focus timer
+          //
+          // Persistent across every view, because a pomodoro is not a list: it is a
+          // clock that keeps running while you look at something else. It sits above the
+          // separator, so it never scrolls away with the rows.
+          Row {
+            id: focusStrip
+            visible: tt.showFocus && tt.authed
+            width: parent.width
+            spacing: Style.spacing.md
+
+            Text {
+              anchors.verticalCenter: parent.verticalCenter
+              // The clock when there is one to show, the word when there is not, so the
+              // strip never changes width as a block starts and stops.
+              text: tt.focusActive ? tt.focusClockText : Model.focusPhaseLabel("focus")
+              color: tt.focusActive ? widget.foreground : widget.dim
+              font.family: widget.fontFamily
+              font.pixelSize: Style.font.subtitle
+            }
+
+            Text {
+              anchors.verticalCenter: parent.verticalCenter
+              text: tt.focusActive
+                ? (Model.focusPhaseLabel((tt.focus || {}).phase)
+                   + (tt.focusPaused ? " · paused" : "")
+                   + (tt.focusBlocksDone > 0 ? " · " + tt.focusBlocksDone + " done" : ""))
+                : Model.focusPrefsLabel((tt.focus || {}).prefs)
+              color: widget.dim
+              font.family: widget.fontFamily
+              font.pixelSize: Style.font.bodySmall
+            }
+
+            Item { width: Math.max(0, parent.width - 240); height: 1 }
+
+            Button {
+              visible: !tt.focusActive
+              text: "Start"
+              iconText: "󰐊"
+              foreground: widget.foreground
+              fontFamily: widget.fontFamily
+              fontSize: Style.font.bodySmall
+              onClicked: tt.startFocus()
+            }
+
+            Button {
+              visible: tt.focusRunning
+              text: "Pause"
+              iconText: "󰏤"
+              foreground: widget.foreground
+              fontFamily: widget.fontFamily
+              fontSize: Style.font.bodySmall
+              onClicked: tt.pauseFocus()
+            }
+
+            Button {
+              visible: tt.focusPaused
+              text: "Resume"
+              iconText: "󰐊"
+              foreground: widget.foreground
+              fontFamily: widget.fontFamily
+              fontSize: Style.font.bodySmall
+              onClicked: tt.resumeFocus()
+            }
+
+            Button {
+              visible: tt.focusActive
+              // Discard, and nothing else: the account counts finished pomodoros, and
+              // banking half a block would inflate a statistic it shows everywhere.
+              iconText: "󰓛"
+              tooltipText: "Discard this block without recording it"
+              foreground: widget.dim
+              fontFamily: widget.fontFamily
+              fontSize: Style.font.bodySmall
+              onClicked: tt.stopFocus()
+            }
+          }
+
+          // Today's focus total, and its staleness when it is not live.
+          Text {
+            visible: tt.showFocus && tt.authed
+            width: parent.width
+            text: "  " + Model.focusTallyLabel(tt.focusTally)
+            color: widget.dim
+            font.family: widget.fontFamily
+            font.pixelSize: Style.font.caption
+          }
+
           // Breadcrumb back out of a single project.
           Button {
             visible: tt.authed && tt.view === "project" && tt.projectFilter !== ""
@@ -813,7 +952,8 @@ Panel {
           Text {
             visible: tt.authed && tt.loaded && widget.rowCount === 0
             width: parent.width
-            text: tt.search !== "" ? "Nothing matches “" + Model.elide(tt.search, 30) + "”"
+            text: widget.showingHabits ? "No habits set up. Add one in Dida365."
+                : tt.search !== "" ? "Nothing matches “" + Model.elide(tt.search, 30) + "”"
                 : (tt.priorityFilter >= 0 || tt.tagFilter !== "") ? "Nothing matches that filter"
                 : tt.view === "completed" ? "Nothing finished recently"
                 : "Nothing due. Enjoy it."
@@ -908,10 +1048,22 @@ Panel {
                     }
                   }
 
+                  // ---- a habit row
+                  HabitRow {
+                    visible: widget.showingHabits
+                    width: parent.width
+                    habit: entry.modelData
+                    hasCursor: entry.onCursor
+                    foreground: widget.foreground
+                    fontFamily: widget.fontFamily
+                    onHovered: function (isHovered) { if (isHovered) widget.setCursor(entry.index, false) }
+                    onCheckinRequested: tt.checkInHabit(entry.modelData)
+                  }
+
                   // ---- a task row
                   TaskRow {
                     id: taskRow
-                    visible: !entry.isProject
+                    visible: !entry.isProject && !widget.showingHabits
                     width: parent.width
                     task: entry.modelData
                     expanded: widget.expandedId === entry.rowId

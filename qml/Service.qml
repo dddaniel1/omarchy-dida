@@ -17,6 +17,21 @@ Item {
   property var projects: []
   property var groups: []
   property var tags: []
+  // Habits are a second endpoint with their own cache clock, so they get their own
+  // properties and their own process rather than riding the task read.
+  property var habits: []
+  property var habitCounts: ({})
+  property var habitStamp: 0
+  // The focus timer. `focusEndsAt` is an absolute deadline in epoch ms, which is what
+  // lets the countdown survive a reload and stay identical on every monitor: each
+  // surface ticks locally against the same instant the CLI wrote down.
+  property var focus: ({})
+  property var focusTally: ({})
+  property real focusEndsAt: 0
+  property bool focusPaused: false
+  property int focusPausedLeft: 0
+  property int focusBlocksDone: 0
+  property double focusTickMs: Date.now()
   property var counts: root.emptyCounts()
   property bool authed: true
   property bool loaded: false
@@ -42,6 +57,32 @@ Item {
   readonly property int refreshIntervalSec: intSetting("refreshIntervalSec", 300, 30, 86400)
   readonly property int upcomingDays: intSetting("upcomingDays", 7, 0, 30)
   readonly property int completedDays: intSetting("completedDays", 7, 1, 90)
+
+  readonly property bool showHabits: boolSetting("showHabits", true)
+  readonly property bool showFocus: boolSetting("showFocus", true)
+  // 0 means "use the helper's default", not "a zero-length block" — the helper clamps
+  // the same way, so both sides agree on what an unset duration means.
+  readonly property int focusMinutes: intSetting("focusMinutes", 0, 0, 480)
+  readonly property int shortBreakMinutes: intSetting("shortBreakMinutes", 0, 0, 240)
+  readonly property int longBreakMinutes: intSetting("longBreakMinutes", 0, 0, 480)
+  readonly property int longBreakInterval: intSetting("longBreakInterval", 0, 0, 12)
+
+  // How many habits are still open today, for the bar. Zero when habits are hidden, so
+  // switching the section off takes the badge with it.
+  readonly property int habitBadge: {
+    if (!showHabits) return 0
+    return Math.max(0, Number((habitCounts || {}).remaining || 0))
+  }
+
+  readonly property bool focusRunning: focusEndsAt > 0
+  readonly property int focusSecondsLeft: focusRunning
+    ? Model.focusRemaining(focusEndsAt, focusTickMs)
+    : Math.max(0, focusPausedLeft)
+  readonly property string focusClockText: (focusRunning || focusPaused)
+    ? Model.focusClock(focusSecondsLeft)
+    : ""
+  readonly property bool focusActive: focusRunning || focusPaused
+
   readonly property string helperPath: String(Qt.resolvedUrl("../bin/ticktick")).replace(/^file:\/\//, "")
 
   readonly property int badgeCount: {
@@ -114,6 +155,7 @@ Item {
     if (value === "inbox") return "inbox"
     if (value === "overdue") return "overdue"
     if (value === "completed" || value === "done") return "completed"
+    if (value === "habits" || value === "habit") return "habits"
     if (value === "all") return "all"
     return "today"
   }
@@ -570,6 +612,115 @@ Item {
     tagsProcess.running = true
   }
 
+  // Habits, read on entering the Habits view and whenever a write settles. Their own
+  // process, for the same reason tags have one: a habit fetch is a second endpoint and
+  // must never delay a click or a task poll.
+  function loadHabits() {
+    if (habitsProcess.running || !showHabits) return
+    habitsProcess.command = ["python3", helperPath, "habits"]
+    habitsProcess.running = true
+  }
+
+  function applyHabits(payload) {
+    var body = root.bodyOf(payload)
+    if (Array.isArray(body.habits)) root.habits = body.habits
+    if (Util.isPlainObject(body.counts)) root.habitCounts = body.counts
+    if (Util.isPlainObject(body.date)) root.habitStamp = Number(body.date.stamp || 0)
+  }
+
+  // Re-derive the counts from the rows on screen, so an optimistic click moves the
+  // bar badge in the same frame instead of a poll later.
+  function recountHabits(rows) {
+    var total = 0, due = 0, done = 0, best = 0
+    for (var i = 0; i < (rows || []).length; i++) {
+      var row = rows[i] || {}
+      total++
+      if (row.due === true) {
+        due++
+        if (row.done === true) done++
+      }
+      best = Math.max(best, Number(row.streak || 0))
+    }
+    return { total: total, due: due, done: done, remaining: Math.max(0, due - done), streakBest: best }
+  }
+
+  // Tick a habit off now, and let the helper have the last word. The day's state is
+  // the helper's to decide — a quantified habit steps rather than completes — so this
+  // only guesses at the finished case, and the refresh after the queue drains replaces
+  // the guess with the answer.
+  function checkInHabit(habit) {
+    var row = habit || {}
+    var id = String(row.id || "")
+    if (id === "" || !showHabits) return
+    var patched = []
+    for (var i = 0; i < root.habits.length; i++) {
+      var item = root.habits[i] || {}
+      if (String(item.id || "") !== id) { patched.push(item); continue }
+      var next = {}
+      for (var key in item) next[key] = item[key]
+      next.done = item.done !== true
+      next.status = next.done ? 2 : 0
+      next.value = next.done ? Number(item.goal || 1) : 0
+      next.ratio = next.done ? 1 : 0
+      patched.push(next)
+    }
+    root.habits = patched
+    root.habitCounts = root.recountHabits(patched)
+    enqueue(["checkin", id, "--toggle"])
+  }
+
+  // --- focus ------------------------------------------------------------
+
+  function loadFocus() {
+    if (focusProcess.running) return
+    focusProcess.command = ["python3", helperPath, "focus"]
+    focusProcess.running = true
+  }
+
+  function applyFocus(payload) {
+    var body = root.bodyOf(payload)
+    root.focus = Util.isPlainObject(body) ? body : ({})
+    root.focusEndsAt = Number(body.endsAt || 0)
+    root.focusPaused = body.paused === true
+    root.focusPausedLeft = Math.max(0, Number(body.secondsLeft || 0))
+    root.focusBlocksDone = Math.max(0, Number(body.blocksDone || 0))
+    if (Util.isPlainObject(body.today)) root.focusTally = body.today
+    root.focusTickMs = Date.now()
+  }
+
+  // The durations travel as flags because widget settings are not visible to a CLI
+  // process. They are only meaningful on `start`, which is where the helper writes
+  // them into the block; every later transition reads them back from the file.
+  function focusAction(name) {
+    if (focusProcess.running) return
+    var args = ["focus", name]
+    if (name === "start") {
+      args = args.concat([
+        "--focus-minutes", String(focusMinutes),
+        "--short-break", String(shortBreakMinutes),
+        "--long-break", String(longBreakMinutes),
+        "--long-interval", String(longBreakInterval)
+      ])
+    }
+    focusProcess.command = ["python3", helperPath].concat(args)
+    focusProcess.running = true
+  }
+
+  function startFocus() { focusAction("start") }
+  function pauseFocus() { focusAction("pause") }
+  function resumeFocus() { focusAction("resume") }
+  function stopFocus() { focusAction("stop") }
+  // Called by the countdown when the deadline passes, and by nobody else. A call that
+  // is dropped because a transition is already in flight is simply made again on the
+  // next tick — the countdown is driven by an absolute deadline, not by a step count.
+  function completeFocus() { focusAction("complete") }
+
+  function toggleFocus() {
+    if (focusPaused) { focusAction("resume"); return }
+    if (focusRunning) { focusAction("pause"); return }
+    focusAction("start")
+  }
+
   function parsePreview(text) {
     var next = Model.squish(text)
     if (next === "") return ""
@@ -750,7 +901,36 @@ Item {
   onTagFilterChanged: Qt.callLater(root.refresh)
   onSearchChanged: searchTimer.restart()
 
-  Component.onCompleted: root.loadTags()
+  Component.onCompleted: {
+    root.loadTags()
+    // The timer is read at startup so a block started before the last shell restart
+    // is still counting down in the bar — the whole reason its state is a file.
+    root.loadFocus()
+  }
+
+  Timer {
+    // The focus countdown. Half a second so the displayed second turns over when it
+    // should rather than up to a second late, and driven off an absolute deadline so
+    // a missed tick or a shell reload self-corrects instead of drifting.
+    interval: 500
+    repeat: true
+    running: root.focusRunning
+    onTriggered: {
+      root.focusTickMs = Date.now()
+      if (Model.focusSettled(root.focusEndsAt, root.focusTickMs)) root.completeFocus()
+    }
+  }
+
+  Timer {
+    // Habits change from other devices and at midnight, so a slow poll keeps the
+    // badge honest without anyone opening the panel. Its own timer: habits must not
+    // ride the task cadence, which the user can set to a minute.
+    interval: 300000
+    repeat: true
+    running: root.showHabits && root.authed
+    triggeredOnStart: false
+    onTriggered: root.loadHabits()
+  }
 
   Timer {
     // Runs whether or not the popup is open: the bar badge is the whole point of
@@ -846,6 +1026,9 @@ Item {
       // drains reconciles every optimistic edit at once.
       if (root._queue.length > 0) Qt.callLater(root.pump)
       else Qt.callLater(function () { root.settled() })
+      // A queued check-in is confirmed by re-reading habits once the queue drains;
+      // until then the row shows the click, not the server's opinion of it.
+      if (root._queue.length === 0 && root.showHabits) Qt.callLater(root.loadHabits)
     }
   }
 
@@ -895,6 +1078,35 @@ Item {
       var payload = root.payloadOf(String(tagsOut.text || ""))
       var body = root.bodyOf(payload)
       if (payload && payload.ok === true && Array.isArray(body.tags)) root.tags = body.tags
+    }
+  }
+
+  Process {
+    // Habits: a second endpoint on a second clock. Shared with nothing, so a slow
+    // habit fetch cannot hold up a task poll and a task poll cannot delay a check-in.
+    id: habitsProcess
+    running: false
+    command: []
+    stdout: StdioCollector { id: habitsOut; waitForEnd: true }
+    onExited: function () {
+      var payload = root.payloadOf(String(habitsOut.text || ""))
+      if (payload && payload.ok === true) root.applyHabits(payload)
+      else if (payload && payload.message) root.errorText = String(payload.message)
+    }
+  }
+
+  Process {
+    // Every focus transition, including the ones the countdown fires. Reads and
+    // writes share the slot deliberately: two transitions racing here would move the
+    // timer on twice, and the countdown retries anyway if a call is dropped.
+    id: focusProcess
+    running: false
+    command: []
+    stdout: StdioCollector { id: focusOut; waitForEnd: true }
+    onExited: function () {
+      var payload = root.payloadOf(String(focusOut.text || ""))
+      if (payload && payload.ok === true) root.applyFocus(payload)
+      else if (payload && payload.message) root.errorText = String(payload.message)
     }
   }
 

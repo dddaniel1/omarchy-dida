@@ -268,7 +268,7 @@ parts of this code look more paranoid than they need to.
 | **`GET /project/group` answers 200** | `ticktick project groups`. Projects sit in folders, which the documented project schema never mentions. |
 | **`POST /task/search` answers 200** and reaches **completed** tasks, unlike `/task/filter` | It is its own verb rather than a filter over the cached list, because it is the only search that can answer "where did I put that". `keywords` and `status` are honoured; `projectIds`, `dueFrom` and `dueTo` are accepted and then **ignored** — the same query returns the same rows with and without them — so nothing here may rely on them. |
 | **`GET /project/{id}/column` answers 200** | `Client.columns`. Kanban columns exist and are empty for a list project. |
-| **`GET /habit` and `GET /countdown` answer 200** | Nothing here uses them. Recorded so the next person does not have to rediscover that the surface is wider than the docs. |
+| **`GET /countdown` answers 200** | Nothing here uses it. Recorded so the next person does not have to rediscover that the surface is wider than the docs. |
 | Task objects carry **`tags`, `parentId`/`childIds`, `sortOrder`, `startDate`, `progress`, `columnId`, `etag`, `kind`** — none of which appear in the documented task schema | `views.row` carries the ones the UI can use. In particular `parentId` means nested subtasks are real, not just the flat `items[]` checklist. |
 | Optional fields are **omitted, not sent as null** — a task with no tags has no `tags` key at all | Every reader treats "missing" and "empty" identically; distinguishing them would make an untagged task an error case. |
 

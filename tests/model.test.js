@@ -154,3 +154,106 @@ test("every helper survives being handed nothing", () => {
   assert.strictEqual(Model.sectionTitle(undefined), "Tasks")
   assert.strictEqual(Model.parseSummary(undefined), "")
 })
+
+// --- habits ----------------------------------------------------------------
+
+test("a habit tally shows progress only where there is progress to show", () => {
+  assert.strictEqual(Model.habitTally({ quantified: true, value: 2, goal: 8, unit: "cups" }), "2/8 cups")
+  assert.strictEqual(Model.habitTally({ quantified: true, value: 1, goal: 2, unit: "" }), "1/2")
+  assert.strictEqual(
+    Model.habitTally({ quantified: false, value: 1, goal: 1 }),
+    "",
+    "a one-click habit says nothing '1/1' would not say worse"
+  )
+})
+
+test("a habit tally reads whole numbers as whole numbers", () => {
+  assert.strictEqual(Model.habitTally({ quantified: true, value: 8.0, goal: 8.0 }), "8/8")
+  assert.strictEqual(Model.habitTally({ quantified: true, value: 0.5, goal: 2 }), "0.5/2")
+})
+
+test("a streak is only worth showing once it is one", () => {
+  assert.strictEqual(Model.habitStreakLabel({ streak: 5 }), "5d")
+  assert.strictEqual(Model.habitStreakLabel({ streak: 1 }), "")
+  assert.strictEqual(Model.habitStreakLabel({ streak: 0 }), "")
+  assert.strictEqual(Model.habitStreakLabel({}), "")
+})
+
+test("habit helpers survive being handed nothing", () => {
+  assert.strictEqual(Model.habitTally(undefined), "")
+  assert.strictEqual(Model.habitStreakLabel(undefined), "")
+  assert.strictEqual(Model.trimNumber(undefined), "0")
+  assert.strictEqual(Model.trimNumber("nonsense"), "0")
+})
+
+// --- the focus countdown ---------------------------------------------------
+
+test("the focus clock counts seconds, and grows an hour field only when it must", () => {
+  assert.strictEqual(Model.focusClock(0), "00:00")
+  assert.strictEqual(Model.focusClock(59), "00:59")
+  assert.strictEqual(Model.focusClock(1500), "25:00")
+  assert.strictEqual(Model.focusClock(3600), "1:00:00")
+  assert.strictEqual(Model.focusClock(3725), "1:02:05")
+})
+
+test("the focus clock never goes negative or reads NaN", () => {
+  assert.strictEqual(Model.focusClock(-5), "00:00")
+  assert.strictEqual(Model.focusClock(undefined), "00:00")
+  assert.strictEqual(Model.focusClock("nonsense"), "00:00")
+})
+
+test("remaining is measured from the deadline, which is what survives a reload", () => {
+  var now = 1700000000000
+  assert.strictEqual(Model.focusRemaining(now + 60000, now), 60)
+  assert.strictEqual(Model.focusRemaining(now - 60000, now), 0)
+  assert.strictEqual(Model.focusRemaining(0, now), 0, "no deadline is no block")
+  assert.strictEqual(Model.focusRemaining(undefined, now), 0)
+})
+
+test("a block is settled only once its clock has run out", () => {
+  var now = 1700000000000
+  assert.strictEqual(Model.focusSettled(now + 1000, now), false)
+  assert.strictEqual(Model.focusSettled(now, now), true)
+  assert.strictEqual(Model.focusSettled(now - 1, now), true)
+  assert.strictEqual(Model.focusSettled(0, now), false, "an idle timer is not settled")
+})
+
+test("phase labels are human, including for a phase nobody recognised", () => {
+  assert.strictEqual(Model.focusPhaseLabel("focus"), "Focus")
+  assert.strictEqual(Model.focusPhaseLabel("shortBreak"), "Short break")
+  assert.strictEqual(Model.focusPhaseLabel("longBreak"), "Long break")
+  assert.strictEqual(Model.focusPhaseLabel(""), "Focus")
+})
+
+test("the tally names its staleness rather than passing it off as live", () => {
+  assert.strictEqual(Model.focusTallyLabel({ count: 2, minutes: 25 }), "2 blocks · 25m")
+  assert.strictEqual(Model.focusTallyLabel({ count: 1, minutes: 0 }), "1 block")
+  assert.strictEqual(Model.focusTallyLabel({ count: 0 }), "0 blocks")
+  assert.strictEqual(
+    Model.focusTallyLabel({ count: 1, minutes: 25, source: "cache" }),
+    "1 block · 25m (cached)"
+  )
+  assert.strictEqual(Model.focusTallyLabel(undefined), "0 blocks")
+})
+
+test("focus settings fall back to the same defaults the helper uses", () => {
+  assert.strictEqual(Model.focusPrefsLabel({ focus: 50, shortBreak: 10, longBreak: 30, longInterval: 2 }),
+    "50m · 10/30m every 2")
+  assert.strictEqual(Model.focusPrefsLabel({}), "25m · 5/15m every 4")
+  assert.strictEqual(Model.focusPrefsLabel(undefined), "25m · 5/15m every 4")
+})
+
+// --- the bar label ---------------------------------------------------------
+
+test("the bar label keeps tasks and habits apart", () => {
+  assert.strictEqual(Model.barLabel(3, 2), "3  2♦")
+  assert.strictEqual(Model.barLabel(3, 0), "3")
+  assert.strictEqual(Model.barLabel(0, 2), "2♦")
+  assert.strictEqual(Model.barLabel(0, 0), "", "nothing due and nothing open is nothing")
+})
+
+test("the bar label survives rubbish", () => {
+  assert.strictEqual(Model.barLabel(undefined, undefined), "")
+  assert.strictEqual(Model.barLabel(-1, -1), "")
+  assert.strictEqual(Model.barLabel("2", "1"), "2  1♦")
+})

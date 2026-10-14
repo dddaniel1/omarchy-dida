@@ -272,6 +272,107 @@ function parseSummary(payload) {
   return parts.join(" · ")
 }
 
+// --- habits and focus ------------------------------------------------------
+
+// A number for a tally: 8 rather than 8.0, but never "NaN" or a traceback.
+function trimNumber(value) {
+  var n = Number(value)
+  if (isNaN(n)) return "0"
+  return (n === Math.floor(n)) ? String(Math.floor(n)) : String(Math.round(n * 100) / 100)
+}
+
+// The day's progress on a habit row, e.g. "2/8 cups". Empty for a habit you
+// finish in one click, because "1/1" says nothing a checkbox does not.
+//
+// Everything is read off the row the helper already resolved — value, goal,
+// unit, quantified. Recomputing the goal/step rules here would be a second
+// implementation of them, and the two would drift.
+function habitTally(row) {
+  var habit = row || {}
+  if (habit.quantified !== true) return ""
+  var text = trimNumber(habit.value) + "/" + trimNumber(habit.goal)
+  var unit = squish(habit.unit)
+  return unit === "" ? text : text + " " + unit
+}
+
+// The streak, or nothing at all when there is none worth mentioning. A single
+// day is not a streak yet, and showing "1d" on every habit would be noise.
+function habitStreakLabel(row) {
+  var days = toInt((row || {}).streak)
+  return days > 1 ? days + "d" : ""
+}
+
+// `mm:ss`, growing to `h:mm:ss` past an hour. Seconds, not minutes: this is a
+// countdown, and the whole point of it is that the last minute is visible.
+function focusClock(seconds) {
+  var left = Math.max(0, Math.floor(Number(seconds) || 0))
+  var hours = Math.floor(left / 3600)
+  var minutes = Math.floor((left % 3600) / 60)
+  var secs = left % 60
+  if (hours > 0) return hours + ":" + pad2(minutes) + ":" + pad2(secs)
+  return pad2(minutes) + ":" + pad2(secs)
+}
+
+// Whether a running block's deadline has passed, within the same half-second of
+// slack the helper allows itself so a tick cannot land a hair early.
+function focusSettled(endsAt, nowMs) {
+  var end = Number(endsAt) || 0
+  if (end <= 0) return false
+  return end - (Number(nowMs) || 0) <= 250
+}
+
+// Seconds left on a block, from its absolute deadline. Empty when there is none,
+// which is how an idle timer reads as idle rather than as 00:00.
+function focusRemaining(endsAt, nowMs) {
+  var end = Number(endsAt) || 0
+  if (end <= 0) return 0
+  return Math.max(0, Math.round((end - (Number(nowMs) || 0)) / 1000))
+}
+
+function focusPhaseLabel(phase) {
+  var name = String(phase || "")
+  if (name === "focus") return "Focus"
+  if (name === "shortBreak") return "Short break"
+  if (name === "longBreak") return "Long break"
+  return "Focus"
+}
+
+// Today's focus totals: "2 blocks · 25m", and marked when they are not live.
+// An offline tally is the last thing the account said, and saying so is the
+// difference between a stale number and a wrong one.
+function focusTallyLabel(tally) {
+  var data = tally || {}
+  var blocks = toInt(data.count)
+  var minutes = toInt(data.minutes)
+  var text = plural(blocks, "block")
+  if (minutes > 0) text += " · " + minutes + "m"
+  if (String(data.source || "network") !== "network") text += " (cached)"
+  return text
+}
+
+// The resolved durations, in minutes. The helper sends them already resolved, so
+// this only reads them; a missing set falls back to the same defaults it uses.
+function focusPrefsLabel(prefs) {
+  var p = prefs || {}
+  var focus = toInt(p.focus) || 25
+  var short = toInt(p.shortBreak) || 5
+  var long = toInt(p.longBreak) || 15
+  var every = toInt(p.longInterval) || 4
+  return focus + "m · " + short + "/" + long + "m every " + every
+}
+
+// The bar label. The task count and the open habits are separate numbers because
+// they are separate things: "3  2♦" is three tasks due and two habits still open,
+// and the diamond is what keeps them from reading as five of one thing.
+function barLabel(taskCount, habitsLeft) {
+  var parts = []
+  var tasks = toInt(taskCount)
+  var habits = toInt(habitsLeft)
+  if (tasks > 0) parts.push(String(tasks))
+  if (habits > 0) parts.push(habits + "♦")
+  return parts.join("  ")
+}
+
 if (typeof module !== "undefined") {
   module.exports = {
     squish: squish,
@@ -294,6 +395,16 @@ if (typeof module !== "undefined") {
     reminderLabel: reminderLabel,
     remindersLabel: remindersLabel,
     checklistProgress: checklistProgress,
-    parseSummary: parseSummary
+    parseSummary: parseSummary,
+    trimNumber: trimNumber,
+    habitTally: habitTally,
+    habitStreakLabel: habitStreakLabel,
+    focusClock: focusClock,
+    focusSettled: focusSettled,
+    focusRemaining: focusRemaining,
+    focusPhaseLabel: focusPhaseLabel,
+    focusTallyLabel: focusTallyLabel,
+    focusPrefsLabel: focusPrefsLabel,
+    barLabel: barLabel
   }
 }

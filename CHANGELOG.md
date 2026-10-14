@@ -10,6 +10,32 @@ TickTick's own rules, in the bar.
 
 ### Added
 
+- **Habits** — a Habits view with today's check-in state on every row, streaks, and a
+  tally for quantified habits. `Enter` or a click checks one in (stepping a quantified
+  habit rather than finishing it), and the bar counts open habits beside the task count.
+- **A focus timer** — a pomodoro that counts down in the bar and uploads each finished
+  block to the account's focus statistics, with break handling and a discard that
+  records nothing.
+- **`ticktick habits`**, **`ticktick checkin`**, and **`ticktick focus`**
+  (`status`/`start`/`pause`/`resume`/`stop`/`complete`/`log`), so both are scriptable.
+- Habit check-ins and focus blocks join the offline outbox: a click made in a tunnel
+  survives the reboot and drains later.
+
+### Notes
+
+- The habit list is `GET /habit`, singular — `/habits` is the web app's path and 404s
+  against a bearer token.
+- The `to` bound on `GET /habit/checkins` is exclusive, which nothing documents, so an
+  inclusive day range has to be sent a day longer.
+- A focus record's `duration` is milliseconds in a response and seconds in a request,
+  the opposite of what its documentation claims.
+- The focus timer's clock lives in a file, not in the widget: a bar is built per
+  monitor, so one in QML would be several clocks racing to upload the same block.
+
+### Previously
+
+The task list, the sync engine and the CLI below.
+
 - **The full set of smart lists** — Today, Tomorrow, Next 7, Inbox, All, Lists and Done, on
   <kbd>1</kbd>–<kbd>7</kbd> and in the tab strip. Today is what is due today *plus* whatever is
   late, Tomorrow is tomorrow alone, and a list is not a date filter at all, so the Inbox shows

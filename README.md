@@ -206,12 +206,13 @@ The popup is fully keyboard-driven — the mouse is optional.
 | <kbd>Enter</kbd> | complete the task under the cursor |
 | <kbd>Space</kbd> | expand / collapse its detail |
 | <kbd>←</kbd> <kbd>→</kbd> / <kbd>Tab</kbd> | switch view |
-| <kbd>1</kbd>–<kbd>7</kbd> | jump to Today / Tomorrow / Next 7 / Inbox / All / Lists / Done |
+| <kbd>1</kbd>–<kbd>8</kbd> | jump to Today / Tomorrow / Next 7 / Inbox / All / Lists / Done / Habits |
 | <kbd>a</kbd> | quick-add |
 | <kbd>/</kbd> | search |
 | <kbd>o</kbd> | cycle sort — list, date, priority, title (this also sets the headings) |
 | <kbd>f</kbd> | filter by priority and tag; <kbd>Esc</kbd> clears it |
 | <kbd>p</kbd> | cycle priority |
+| <kbd>P</kbd> | start / pause / resume the focus timer |
 | <kbd>x</kbd> / <kbd>d</kbd> | delete (with confirmation) |
 | <kbd>r</kbd> | refresh from the cache |
 | <kbd>s</kbd> | sync — push anything queued and refetch now |
@@ -219,6 +220,42 @@ The popup is fully keyboard-driven — the mouse is optional.
 
 <kbd>r</kbd> and <kbd>s</kbd> differ on purpose: reads are cache-first, so <kbd>r</kbd>
 is instant and may serve what it already has. <kbd>s</kbd> is how you say *go and look*.
+
+### Habits
+
+The **Habits** view is the account's habit list, with today's state on every row: a
+filled mark for a finished day, the streak beside it once it is more than a day, and a
+tally for a quantified habit (`2/8 cups`). <kbd>Enter</kbd> or a click checks a habit in
+— one click for a finish-in-one habit, one *step* for a quantified one, and a click on a
+finished day un-finishes it. A habit outside its own repeat rule is dimmed and marked
+`not today` rather than hidden, so a weekly habit does not look deleted on the other six
+days.
+
+The bar counts open habits beside the task count: `3  2♦` is three tasks due and two
+habits still open. The `<kbd>1</kbd>`–`<kbd>8</kbd>` shortcut and the tab only appear
+when `showHabits` is on.
+
+### Focus
+
+The **focus timer** is a pomodoro that uploads each finished block to the account's
+focus statistics. It appears as a strip in the panel and counts down in the bar while it
+runs, outranking the task count — it is the number with seconds on it.
+
+| Control | Action |
+|---|---|
+| Start / <kbd>P</kbd> | begin a focus block |
+| Pause / <kbd>P</kbd> | stop the clock where it is; nothing is recorded |
+| Resume / <kbd>P</kbd> | carry on from where it stopped |
+| Discard (⏹) | throw the block away, unrecorded |
+
+Only a completed focus block is uploaded, and a completed break is not uploaded at all —
+the account counts pomodoros, and banking half a block or a break would inflate a
+statistic it shows on every device. Durations come from the settings below; the account
+has no focus settings of its own to defer to.
+
+The timer's state lives in `~/.local/state/ticktick/focus.json` rather than in the
+widget, which is what makes several monitors share one clock and a block survive a shell
+restart. It also means the countdown is not lost when the panel closes.
 
 ### Notes vs tasks
 
@@ -385,6 +422,16 @@ omarchy bar plugin set dddaniel1.dida365 hideWhenEmpty true --json
 | `showProjectChips` | bool | `true` | show each task's project on its row, where the section heading does not already say it |
 | `includeUndated` | bool | `false` | include tasks with no due date in **All** |
 | `confirmDelete` | bool | `true` | confirm before deleting (deletion is permanent) |
+| `showHabits` | bool | `true` | the **Habits** view, and the open-habit count in the bar |
+| `showFocus` | bool | `true` | the focus strip, and the countdown in the bar while a block runs |
+| `focusMinutes` | 0–480 | `0` | focus block length; `0` uses 25 minutes |
+| `shortBreakMinutes` | 0–240 | `0` | break after a block; `0` uses 5 minutes |
+| `longBreakMinutes` | 0–480 | `0` | the longer break every few blocks; `0` uses 15 minutes |
+| `longBreakInterval` | 0–12 | `0` | focus blocks per long break; `0` uses 4 |
+
+A `0` on any duration means "use the default", not "a zero-length block" — the widget
+and the helper resolve it the same way, so the two cannot disagree about what unset
+means.
 
 ## How it works
 
@@ -413,7 +460,8 @@ TickTick client, these will save you an afternoon:
 - **The Open API is much bigger than its docs.** `GET /tag`, `GET /project/group`,
   `POST /task/search`, `GET /project/{id}/column`, `GET /habit` and `GET /countdown`
   all work and none are documented. Tasks carry `tags`, `parentId`/`childIds`,
-  `sortOrder`, `startDate` and `progress`.
+  `sortOrder`, `startDate` and `progress`. Habits and focus records, however, **are**
+  documented — see below.
 - **`POST /task/search` ignores half its own parameters.** `keywords` and `status` are
   honoured; `projectIds`, `dueFrom` and `dueTo` are accepted and have no effect. It
   does reach completed tasks, which `/task/filter` cannot.
@@ -433,16 +481,40 @@ TickTick client, these will save you an afternoon:
 - **There is no PATCH.** Every task update replaces the whole task, so any client must
   send back the fields it did not mean to change — including the entire checklist.
 
+### Habit and focus endpoints, which are documented and still lie
+
+Habits and pomodoros are on the Open API proper, so nothing here needs the web app's
+cookie session. Four things about them were only learnable by executing against a live
+account:
+
+- **The habit list is `GET /habit` — singular.** `/habits` is a 404, which is what the
+  web app uses and what a client that starts from someone else's code will reach for.
+- **`to` on `GET /habit/checkins` is exclusive.** `from == to` answers nothing at all,
+  and a range ending on today omits today. An inclusive bound has to be sent a day
+  later. Nothing documents this, and the silent failure is a habit that never shows as
+  done.
+- **`duration` on a focus record is milliseconds, not seconds.** The docs say seconds
+  and their own example pairs `1500` with a 25-minute block. A live 60-second block
+  comes back as `60000`. The timestamps are preferred over the field for that reason.
+- **A check-in can be created but not deleted.** `POST /habit/{id}/checkin` upserts on
+  `(habit, day)`; there is no endpoint that removes one, so un-ticking a day writes a
+  zero rather than erasing the record.
+
+There is also **no focus preferences endpoint**: `POST /preference` answers only the
+account's time zone, so pomodoro lengths are the widget's own settings rather than
+something the account supplies.
+
 ### Limitations
 
 These are TickTick's, not the plugin's:
 
 - A completed task **cannot be un-completed** — no endpoint exists. Undo it in the app.
-- No webhooks, so the widget polls.
+- A check-in **cannot be deleted**, only overwritten with a zero.
+- No webhooks, so the widget polls. Habits ride their own slow poll — every five
+  minutes — because they also change at midnight and from other devices.
 - Attachments and sharing are not exposed.
-
-Habits, focus/pomodoro records and countdowns do have endpoints, but they are not a
-to-do list and this widget deliberately leaves them alone.
+- Countdowns have an endpoint (`GET /countdown`) but are not shown here: they are not
+  a to-do list either.
 
 ## Troubleshooting
 
