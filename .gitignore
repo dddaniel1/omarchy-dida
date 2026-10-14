@@ -1,0 +1,11 @@
+# local tool state
+/.impeccable
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+
+# misc
+.DS_Store
+*.log
