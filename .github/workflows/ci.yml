@@ -41,7 +41,8 @@ jobs:
           # No credentials in CI: every subcommand must still answer with
           # structured JSON rather than a traceback, and exit 0 doing it.
           for cmd in "tasks" "projects" "status" "sync" "tags" "search x" \
-                     "complete abc" "delete abc" "add hello" "item add abc step"; do
+                     "complete abc" "delete abc" "add hello" "item add abc step" \
+                     "habits" "stats"; do
             out=$(python bin/ticktick --json $cmd) || { echo "non-zero exit: $cmd"; exit 1; }
             echo "$cmd -> $out"
             echo "$out" | python -c "

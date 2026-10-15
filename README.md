@@ -162,7 +162,8 @@ ticktick status
 The token is passed to the helper over **stdin**, never on the command line, because
 anything in `argv` is readable by every process on the machine through
 `/proc/<pid>/cmdline`. It is stored at `~/.config/ticktick/credentials.json`, mode
-`0600`. Nothing is sent anywhere except `api.ticktick.com`.
+`0600`. Nothing is sent anywhere except the API host you signed in against
+(`api.dida365.com` by default).
 
 **Already signed in to [TickTick's own CLI](https://www.npmjs.com/package/@ticktick/ticktick-cli)?**
 Then you are already signed in here — its token is picked up automatically from
@@ -206,7 +207,7 @@ The popup is fully keyboard-driven — the mouse is optional.
 | <kbd>Enter</kbd> | complete the task under the cursor |
 | <kbd>Space</kbd> | expand / collapse its detail |
 | <kbd>←</kbd> <kbd>→</kbd> / <kbd>Tab</kbd> | switch view |
-| <kbd>1</kbd>–<kbd>8</kbd> | jump to Today / Tomorrow / Next 7 / Inbox / All / Lists / Done / Habits |
+| <kbd>1</kbd>–<kbd>8</kbd> | jump to a view — Today, Tomorrow, Next 7, Inbox, All, Habits, Stats, Done; the digits follow the sidebar, so hiding Habits or Stats drops them out |
 | <kbd>a</kbd> | quick-add |
 | <kbd>/</kbd> | search |
 | <kbd>o</kbd> | cycle sort — list, date, priority, title (this also sets the headings) |
@@ -243,7 +244,8 @@ runs, outranking the task count — it is the number with seconds on it.
 
 | Control | Action |
 |---|---|
-| Start / <kbd>P</kbd> | begin a focus block |
+| Start / <kbd>P</kbd> | begin an independent focus block |
+| ▶ on a task row | begin a focus block linked to that task |
 | Pause / <kbd>P</kbd> | stop the clock where it is; nothing is recorded |
 | Resume / <kbd>P</kbd> | carry on from where it stopped |
 | Discard (⏹) | throw the block away, unrecorded |
@@ -253,9 +255,32 @@ the account counts pomodoros, and banking half a block or a break would inflate 
 statistic it shows on every device. Durations come from the settings below; the account
 has no focus settings of its own to defer to.
 
+The task's name appears beneath the timer and stays there when changing views or
+restarting the shell. Task start buttons are disabled while a timer is running or
+paused, and unavailable on notes, completed tasks or unsynced drafts. A completed
+linked block includes the task ID in its focus record; it does not complete the task.
+
 The timer's state lives in `~/.local/state/ticktick/focus.json` rather than in the
 widget, which is what makes several monitors share one clock and a block survive a shell
 restart. It also means the countdown is not lost when the panel closes.
+
+### Statistics
+
+The **Stats** view is a read-only dashboard assembled from everything the widget already
+knows. It never takes the keyboard cursor, because a statistic is not something to act
+on.
+
+- **Completed** — a bar per day over the **Done** window (`completedDays`), from the one
+  endpoint that can see finished work.
+- **Open work** — the outstanding tasks grouped by list, with a priority chip row and a
+  tag breakdown, all read from the same rows the task pane renders.
+- **Habits and focus** — the day's check-in tally, the best current streak, and how many
+  pomodoros and minutes were logged today.
+
+It is fetched on demand — entering the view is what asks for it — so nothing rides the
+poll, and every section degrades on its own: one the account could not answer is hidden
+rather than drawn empty. `showStats` turns the view, its sidebar entry and its number key
+off together.
 
 ### Notes vs tasks
 
@@ -376,6 +401,7 @@ ticktick item move <taskId> <itemId> 0
 ticktick item remove <taskId> <itemId>
 
 ticktick completed --days 7
+ticktick stats --days 30                     # trend, cross-list breakdown, habits, focus
 ticktick projects
 ticktick project add "Reading" --color "#F18181"
 ticktick project groups
@@ -416,13 +442,14 @@ omarchy bar plugin set dddaniel1.dida365 hideWhenEmpty true --json
 | `completedDays` | 1–90 | `7` | how far back **Done** looks |
 | `badgeMode` | Today / Overdue / All / None | `Today` | what the bar number counts (never notes) |
 | `sortBy` | List / Date / Priority / Title | `List` | row order, and therefore the section headings |
-| `defaultView` | Today / Tomorrow / Next / Inbox / All / Lists / Completed | `Today` | which view the popup opens on |
+| `defaultView` | Today / Tomorrow / Next / Inbox / All / Lists / Habits / Stats / Completed | `Today` | which view the popup opens on |
 | `defaultProject` | project id | `""` | where quick-add files tasks (blank = Inbox) |
 | `hideWhenEmpty` | bool | `false` | remove the widget from the bar when the badge is 0 |
 | `showProjectChips` | bool | `true` | show each task's project on its row, where the section heading does not already say it |
 | `includeUndated` | bool | `false` | include tasks with no due date in **All** |
 | `confirmDelete` | bool | `true` | confirm before deleting (deletion is permanent) |
 | `showHabits` | bool | `true` | the **Habits** view, and the open-habit count in the bar |
+| `showStats` | bool | `true` | the **Stats** view and its sidebar entry |
 | `showFocus` | bool | `true` | the focus strip, and the countdown in the bar while a block runs |
 | `focusMinutes` | 0–480 | `0` | focus block length; `0` uses 25 minutes |
 | `shortBreakMinutes` | 0–240 | `0` | break after a block; `0` uses 5 minutes |
@@ -443,7 +470,7 @@ means.
                       ticktick/{cli,store,views,api,…}.py
                                              │  cache + outbox on disk
                                              │  HTTPS
-                                  api.ticktick.com/open/v1
+                                  api.dida365.com/open/v1
 ```
 
 QML never speaks HTTP — not even for signing in. Every bit of logic worth testing —
@@ -573,21 +600,18 @@ python tests/validate_qml_api.py
 
 ## This repository
 
-This plugin is the root of the [`omarchy-dida`](https://github.com/dddaniel1/omarchy-dida)
-workspace, which is also where the two upstream community plugins are kept for
-reference:
+This plugin is the whole of the [`omarchy-dida`](https://github.com/dddaniel1/omarchy-dida)
+repository — only the plugin at the repo root is installed by `omarchy plugin add`:
 
 ```
 manifest.json, qml/, ticktick/, bin/, tests/   this plugin, the Dida365 fork
-sources/siam-ticktick/                         upstream for this plugin (EhsanulHaqueSiam)
-sources/sotoaugusto-ticktick/                  the other community plugin (SotoAugusto)
 COMPARISON.md                                  what each upstream does and does not do
-WORKSPACE.md                                   the workspace, and how to refresh upstreams
+WORKSPACE.md                                   the workspace, and upstream notes
 ```
 
-Both `sources/` trees are `git subtree`s — their full history is part of this repo and
-`git subtree pull` refreshes them. They are reference copies: they do not load in the
-shell, and only the plugin at the repo root is installed by `omarchy plugin add`.
+The two upstream community plugins were previously vendored here under `sources/`; that
+copy has been removed. The `siam` and `soto` git remotes remain for comparing against
+upstream, and [COMPARISON.md](COMPARISON.md) records the baseline.
 
 ## License
 

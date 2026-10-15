@@ -11,6 +11,7 @@
 #
 # Usage: tests/screenshots.sh [outdir]     (default docs/img)
 set -uo pipefail
+export MAGICK_THREAD_LIMIT=1
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SHELL_DIR="${OMARCHY_PATH:-/usr/share/omarchy}/shell"
@@ -26,7 +27,7 @@ done
 [ -n "${WAYLAND_DISPLAY:-}" ] || fail "no Wayland session — this needs a running compositor"
 
 WORK="$(mktemp -d)"
-trap 'rm -rf "$WORK"; [ -n "${FAKE_PID:-}" ] && kill "$FAKE_PID" 2>/dev/null' EXIT
+trap '[ -n "${QS_PID:-}" ] && kill "$QS_PID" 2>/dev/null; [ -n "${FAKE_PID:-}" ] && kill "$FAKE_PID" 2>/dev/null; rm -rf "$WORK"' EXIT
 mkdir -p "$OUT"
 
 ln -s "$SHELL_DIR/Ui" "$WORK/Ui"
@@ -39,8 +40,31 @@ info "starting the fake TickTick API…"
 python3 - "$WORK" "$ROOT" <<'PY' > "$WORK/fake.log" 2>&1 &
 import json, pathlib, sys, time
 sys.path.insert(0, sys.argv[2])
-from tests.fake_ticktick import Server, TOKEN
+from tests.fake_ticktick import Server, TOKEN, _Handler
 from datetime import datetime, timedelta
+
+# The task fake predates habits/focus; this preview only needs their read routes.
+original_get = _Handler.do_GET
+
+def preview_get(self):
+    path = self.path.split("?", 1)[0]
+    payloads = {
+        "/open/v1/focus": [],
+        "/open/v1/habit": [
+            {"id": "h-water", "name": "Drink water", "status": 0,
+             "goal": 8, "step": 1, "unit": "glasses", "type": "Real"},
+            {"id": "h-read", "name": "Read for twenty minutes", "status": 0,
+             "goal": 1, "step": 1, "type": "Boolean"},
+        ],
+        "/open/v1/habit/sections": [],
+        "/open/v1/habit/checkins": [],
+    }
+    if path in payloads:
+        self._send(200, payloads[path])
+    else:
+        original_get(self)
+
+_Handler.do_GET = preview_get
 
 work = pathlib.Path(sys.argv[1])
 s = Server(); s.__enter__()
@@ -119,8 +143,44 @@ ShellRoot {
   // The popup is a full-screen layer surface with the card drawn inside it at
   // `cardOrigin`, so the card's rect is the thing worth cropping to.
   function announceCard(name) {
+    script.stop()
+    shell.widget.open()
+    cardShot.name = name
+    cardShot.restart()
+  }
+
+  Timer {
+    id: cardShot
+    property string name: ""
+    interval: 200
+    onTriggered: shell.captureCard(name)
+  }
+
+  function captureCard(name) {
+    var w = shell.widget
+    if (name === "detail") {
+      for (var i = 0; i < w.rows.length; i++) {
+        if (String(w.rows[i].title).indexOf("lab report") >= 0) w.expandedId = String(w.rows[i].id)
+      }
+    }
+    if (name === "narrow") {
+      w.expandedId = ""
+      w.service.focusPaused = true
+      w.service.focusPausedLeft = 725
+      w.service.focusBlocksDone = 3
+      w.service.focusState = ({ phase: "long_break" })
+    }
     var p = shell.widget ? shell.widget.panel : null
-    if (!p) return
+    if (!p || !p.open || !p.backingWindowVisible) return
+    // Capture the QML surface itself while the scripted state is held steady.
+    var card = p.contentItem[0].parent.parent
+    var targetPath = Quickshell.env("DIDA_SCREENSHOT_DIR") + "/" + name + ".png"
+    Qt.callLater(function () {
+      card.grabToImage(function (result) {
+        result.saveToFile(targetPath)
+        script.restart()
+      })
+    })
     // The card is exactly contentWidth x contentHeight; `padding` is an inset
     // applied inside it, not an outset, so adding it drags in the wallpaper.
     console.log("SHOT " + name + " " + Math.round(p.cardOrigin.x) + " " + Math.round(p.cardOrigin.y)
@@ -201,7 +261,7 @@ ShellRoot {
   Timer {
     id: script
     property int step: 0
-    interval: 2600
+    interval: 4000
     repeat: true
     running: true
     onTriggered: {
@@ -234,11 +294,68 @@ ShellRoot {
         break
       case 5:
         w.expandedId = ""
-        w.setView("project")
+        // Scope to one real list, so the shot shows the two-pane shape: the sidebar
+        // with the folders, and a task pane scoped to the chosen list.
+        var picked = null
+        for (var p = 0; p < w.service.projects.length; p++) {
+          var proj = w.service.projects[p]
+          if (String(proj.id).indexOf("inbox") !== 0 && Number(proj.count) > 0) { picked = proj; break }
+        }
+        if (picked) w.openProject(String(picked.id))
+        else w.setView("all")
         break
       case 6:
         shell.announceCard("lists")
         console.log("SHOT step lists")
+        break
+      case 7:
+        w.setView("all")
+        w.filtering = true
+        w.service.sort = "priority"
+        w.service.focusPaused = true
+        w.service.focusPausedLeft = 725
+        w.service.focusBlocksDone = 3
+        w.service.focusState = ({ phase: "long_break" })
+        w.panel.contentWidth = Style.space(600)
+        break
+      case 8:
+        shell.announceCard("narrow")
+        console.log("SHOT step narrow")
+        break
+      case 9:
+        w.filtering = false
+        w.panel.contentWidth = Style.space(680)
+        w.setView("habits")
+        break
+      case 10:
+        shell.announceCard("habits")
+        console.log("SHOT step habits")
+        break
+      case 11:
+        w.setView("today")
+        w.service.focusEndsAt = 0
+        w.service.focusPaused = false
+        w.service.focusPausedLeft = 0
+        break
+      case 12:
+        // Drive the actual row button; no real account is used by this harness. The
+        // button is revealed on hover or under the cursor, so put the cursor on row 0.
+        if (w.rowCount > 0) w.setCursor(0)
+        function findFocusButton(item) {
+          if (item.objectName === "taskFocusButton" && item.visible && item.enabled) return item
+          var children = item.children || []
+          for (var c = 0; c < children.length; c++) {
+            var found = findFocusButton(children[c])
+            if (found) return found
+          }
+          return null
+        }
+        var focusButton = findFocusButton(w.panel.contentItem[0])
+        if (focusButton) focusButton.clicked()
+        break
+      case 13:
+        shell.announceCard("focus")
+        console.log("SHOT step focus linked=" + Boolean(w.service.focusState.taskId))
         break
       default:
         Qt.quit()
@@ -253,6 +370,7 @@ info "rendering…"
 XDG_CONFIG_HOME="$WORK/config" \
 XDG_STATE_HOME="$WORK/state" \
 TICKTICK_API_BASE="$(cat "$WORK/base.txt")" \
+DIDA_SCREENSHOT_DIR="$OUT" \
   quickshell -n -p "$WORK/shell.qml" > "$WORK/out.log" 2>&1 &
 QS_PID=$!
 
@@ -263,12 +381,20 @@ capture() {  # capture <name> <ready-marker>
     sleep 0.25; tries=$((tries + 1))
   done
   grep -q "SHOT $marker" "$WORK/out.log" || { info "no $marker marker; skipping $name"; return; }
+  if [ "$name" != bar ]; then
+    for _ in $(seq 1 20); do [ -s "$OUT/$name.png" ] && break; sleep 0.1; done
+    [ -s "$OUT/$name.png" ] || fail "rendered card capture failed for $name"
+    info "wrote $OUT/$name.png"
+    return
+  fi
   sleep 0.5
   # The geometry line is named after the image, not after the readiness marker.
   rect="$(sed -e 's/\x1b\[[0-9;]*m//g' "$WORK/out.log" \
           | grep -oE "SHOT $name [0-9]+ [0-9]+ [0-9]+ [0-9]+" | tail -1)"
-  grim "$WORK/$name-full.png" 2>/dev/null || { info "grim failed for $name"; return; }
   if [ -n "$rect" ]; then
+    read -r _ _ x y width height <<< "$rect"
+    grim -g "$x,$y ${width}x${height}" "$WORK/$name-full.png" 2>/dev/null \
+      || { info "grim failed for $name"; return; }
     # `SHOT <name> x y w h` — five fields after the marker word.
     set -- $rect
     # Logical coordinates; grim writes physical pixels, so scale the crop box.
@@ -278,17 +404,9 @@ src, dst, x, y, w, h = sys.argv[1], sys.argv[2], *map(int, sys.argv[3:7])
 out = subprocess.run(["magick", "identify", "-format", "%w %h", src],
                      capture_output=True, text=True).stdout.split()
 pw, ph = int(out[0]), int(out[1])
-# The logical screen is whatever the compositor reports; derive the scale from the
-# ratio rather than trusting a hard-coded number.
-import json
-mons = json.loads(subprocess.run(["hyprctl", "-j", "monitors"],
-                                 capture_output=True, text=True).stdout)
-lw = max(int(m["width"] / m["scale"]) for m in mons)
-scale = pw / lw
-# Exactly the widget, nothing of the desktop behind it: any padding would drag in
-# the wallpaper and the real bar, which have no business in this repo's README.
-box = (max(0, int(x * scale)), max(0, int(y * scale)),
-       min(pw, int(w * scale)), min(ph, int(h * scale)))
+# grim already captured the logical region, including its output's scale.
+scale = pw / w
+box = (0, 0, pw, ph)
 # The card is drawn with rounded corners over whatever is behind it, so the four
 # corners are wallpaper. Mask them to transparent — which also reads correctly on
 # GitHub in both light and dark themes.
@@ -319,6 +437,9 @@ capture bar "bar "
 capture popup "step popup"
 capture detail "step detail"
 capture lists "step lists"
+capture narrow "step narrow"
+capture habits "step habits"
+capture focus "step focus"
 
 wait $QS_PID 2>/dev/null
 sed -e 's/\x1b\[[0-9;]*m//g' "$WORK/out.log" | grep -E "SHOT|qml:" | sed 's/^/  /'

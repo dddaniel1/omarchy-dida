@@ -3,8 +3,8 @@ import qs.Commons
 import qs.Ui
 import "Model.js" as Model
 
-// One task line: checkbox · title · project chip · checklist progress ·
-// priority dot · due label, plus a delete affordance revealed under the cursor.
+// A task title above its project, checklist, priority and due metadata,
+// with a stable delete affordance revealed under the cursor.
 //
 // Every field on `task` is read through Model's total helpers. views.collect
 // always emits the full row shape, but an optimistic local patch or a payload
@@ -16,9 +16,17 @@ CursorSurface {
   property var task: null
   property bool expanded: false
   property bool showProjectChip: true
+  property bool showFocusAction: false
+  property bool focusAvailable: true
   property string fontFamily: Style.font.family
   property color urgent: Color.urgent
 
+  // Row-local hover, revealed the way the app reveals row actions: on hover, or under
+  // the keyboard cursor. A `HoverHandler` rather than the MouseArea's `containsMouse`,
+  // so moving the pointer onto the action buttons themselves does not blink them out.
+  property bool _hover: false
+
+  signal focusRequested()
   signal completeRequested()
   signal deleteRequested()
   signal expandRequested()
@@ -57,7 +65,11 @@ CursorSurface {
   // The open row keeps the "current" tint so the detail underneath reads as
   // belonging to it even after the cursor walks away.
   current: expanded
-  implicitHeight: Math.max(check.implicitHeight, title.implicitHeight, trailing.implicitHeight) + Style.spacing.xl
+  implicitHeight: Math.max(check.implicitHeight, labels.implicitHeight, deleteAction.height) + Style.spacing.lg
+
+  HoverHandler {
+    onHoveredChanged: root._hover = hovered
+  }
 
   MouseArea {
     anchors.fill: parent
@@ -93,106 +105,137 @@ CursorSurface {
     }
   }
 
-  Text {
-    id: title
+  Column {
+    id: labels
     anchors.left: check.right
     anchors.leftMargin: Style.spacing.controlGap
-    anchors.right: trailing.left
+    anchors.right: rowActions.left
     anchors.rightMargin: Style.spacing.md
     anchors.verticalCenter: parent.verticalCenter
-    text: root.titleText
-    textFormat: Text.PlainText
-    // Struck through and stepped back, the same way a ticked checklist item reads in
-    // the detail pane. Done work is still worth seeing; it is not worth reading twice.
-    color: root.done ? root.dim : root.foreground
-    font.family: root.fontFamily
-    font.pixelSize: Style.font.body
-    font.strikeout: root.done
-    elide: Text.ElideRight
+    spacing: Style.spacing.xs
+
+    Text {
+      id: title
+      width: parent.width
+      text: root.titleText
+      textFormat: Text.PlainText
+      color: root.done ? root.dim : root.foreground
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.body
+      font.strikeout: root.done
+      elide: Text.ElideRight
+    }
+
+    Flow {
+      id: metadata
+      width: parent.width
+      spacing: Style.spacing.md
+      BorderSurface {
+        id: chip
+        visible: root.showProjectChip && root.projectName !== ""
+        width: visible ? Math.min(metadata.width, chipText.implicitWidth + Style.spacing.lg) : 0
+        height: Math.max(Style.space(20), chipText.implicitHeight + Style.spacing.xs)
+        color: "transparent"
+        radius: Style.cornerRadius
+        borderSpec: Border.controlSpec("normal", root.chipColor, root.chipColor)
+
+        Text {
+          id: chipText
+          anchors.centerIn: parent
+          width: Math.max(0, parent.width - Style.spacing.lg)
+          elide: Text.ElideRight
+          horizontalAlignment: Text.AlignHCenter
+          text: root.projectName
+          textFormat: Text.PlainText
+          color: root.chipColor
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+        }
+      }
+
+      Text {
+        id: progress
+        visible: root.progressText !== ""
+        height: Math.max(Style.space(20), implicitHeight)
+        verticalAlignment: Text.AlignVCenter
+        text: root.progressText
+        color: root.dim
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.caption
+      }
+
+      Item {
+        id: priorityDot
+        visible: root.priority > 0
+        width: visible ? Style.space(20) : 0
+        height: Math.max(Style.space(20), due.implicitHeight)
+
+        Text {
+          anchors.centerIn: parent
+          text: "●"
+          color: Model.priorityColor(root.priority, root.foreground, root.urgent)
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+        }
+
+        MouseArea {
+          anchors.fill: parent
+          hoverEnabled: true
+          cursorShape: Qt.PointingHandCursor
+          onContainsMouseChanged: if (containsMouse) root.hovered(true)
+          onClicked: root.priorityCycleRequested()
+        }
+      }
+
+      Text {
+        id: due
+        visible: root.dueText !== ""
+        height: Math.max(Style.space(20), implicitHeight)
+        verticalAlignment: Text.AlignVCenter
+        width: Math.min(implicitWidth, metadata.width)
+        elide: Text.ElideRight
+        text: root.dueText
+        color: root.overdue ? root.urgent : root.dim
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.caption
+      }
+
+    }
   }
 
   Row {
-    id: trailing
+    id: rowActions
     anchors.right: parent.right
     anchors.rightMargin: Style.spacing.rowPaddingX
     anchors.verticalCenter: parent.verticalCenter
-    spacing: Style.spacing.md
+    spacing: Style.spacing.xs
 
-    BorderSurface {
-      id: chip
-      visible: root.showProjectChip && root.projectName !== ""
-      width: visible ? chipText.implicitWidth + Style.spacing.lg : 0
-      height: chipText.implicitHeight + Style.spacing.xs
-      anchors.verticalCenter: parent.verticalCenter
-      color: "transparent"
-      radius: Style.cornerRadius
-      borderSpec: Border.controlSpec("normal", root.chipColor, root.chipColor)
-
-      Text {
-        id: chipText
-        anchors.centerIn: parent
-        text: Model.elide(root.projectName, 14)
-        textFormat: Text.PlainText
-        color: root.chipColor
-        font.family: root.fontFamily
-        font.pixelSize: Style.font.caption
-      }
-    }
-
-    Text {
-      id: progress
-      visible: root.progressText !== ""
-      anchors.verticalCenter: parent.verticalCenter
-      text: root.progressText
-      color: root.dim
-      font.family: root.fontFamily
-      font.pixelSize: Style.font.caption
-    }
-
-    Item {
-      id: priorityDot
-      visible: root.priority > 0
-      width: visible ? Style.space(12) : 0
-      height: Style.space(12)
-      anchors.verticalCenter: parent.verticalCenter
-
-      Text {
-        anchors.centerIn: parent
-        text: "●"
-        color: Model.priorityColor(root.priority, root.foreground, root.urgent)
-        font.family: root.fontFamily
-        font.pixelSize: Style.font.caption
-      }
-
-      MouseArea {
-        anchors.fill: parent
-        hoverEnabled: true
-        cursorShape: Qt.PointingHandCursor
-        onContainsMouseChanged: if (containsMouse) root.hovered(true)
-        onClicked: root.priorityCycleRequested()
-      }
-    }
-
-    Text {
-      id: due
-      visible: root.dueText !== ""
-      anchors.verticalCenter: parent.verticalCenter
-      text: root.dueText
-      color: root.overdue ? root.urgent : root.dim
-      font.family: root.fontFamily
-      font.pixelSize: Style.font.caption
+    Button {
+      objectName: "taskFocusButton"
+      visible: root.showFocusAction && root.checkable && (root.hasCursor || root._hover)
+      enabled: root.focusAvailable && String(root.row.id || "") !== ""
+        && String(root.row.id).indexOf("local-draft-") !== 0
+      iconText: "󰐊"
+      tooltipText: root.focusAvailable ? "Start focus for this task" : "A focus timer is already active"
+      width: Style.space(28)
+      height: Style.space(28)
+      horizontalPadding: 0
+      verticalPadding: 0
+      iconSize: Style.font.body
+      foreground: root.foreground
+      fontFamily: root.fontFamily
+      opacity: enabled ? 1 : 0.35
+      onHovered: function (isHovered) { if (isHovered) root.hovered(true) }
+      onClicked: root.focusRequested()
     }
 
     Item {
       id: deleteAction
-      // Always holds its slot and fades instead of appearing: a Row drops an invisible
-      // child's width AND its spacing, so revealing this on hover slid the due date,
-      // the priority dot and the chip left the moment the pointer crossed the row —
-      // under a pointer that was aiming at one of them.
-      width: Style.space(16)
-      height: Style.space(16)
+      // Keep the action slot stable when the cursor changes.
       anchors.verticalCenter: parent.verticalCenter
-      opacity: root.hasCursor ? 1 : 0
+      width: Style.space(24)
+      height: Style.space(24)
+      opacity: (root.hasCursor || root._hover) ? 1 : 0
 
       Behavior on opacity {
         NumberAnimation { duration: 80 }

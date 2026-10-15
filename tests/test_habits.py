@@ -336,6 +336,35 @@ class Rows(unittest.TestCase):
         self.assertEqual(habits.active([None, "junk"]), [])
 
 
+class Sections(unittest.TestCase):
+    def test_internal_names_are_made_readable(self) -> None:
+        # A live Dida365 account names its built-in sections `_morning` and `_night`.
+        self.assertEqual(habits.prettify_section("_morning"), "Morning")
+        self.assertEqual(habits.prettify_section("_night"), "Night")
+
+    def test_a_real_name_is_only_capitalised_at_the_front(self) -> None:
+        self.assertEqual(habits.prettify_section("reading list"), "Reading list")
+        self.assertEqual(habits.prettify_section("早晨"), "早晨")
+
+    def test_underscores_inside_a_name_become_spaces(self) -> None:
+        self.assertEqual(habits.prettify_section("deep_work_block"), "Deep work block")
+
+    def test_nothing_is_nothing(self) -> None:
+        for empty in ("", "   ", "_", None):
+            with self.subTest(empty=empty):
+                self.assertEqual(habits.prettify_section(empty), "")
+
+    def test_the_row_uses_the_readable_form(self) -> None:
+        row = habits.row(
+            {"id": "h1", "goal": 1, "sectionId": "s1"},
+            {},
+            20260407,
+            today=date(2026, 4, 7),
+            sections={"s1": "_morning"},
+        )
+        self.assertEqual(row["section"], "Morning")
+
+
 class Counts(unittest.TestCase):
     def test_remaining_counts_only_due_and_undone(self) -> None:
         rows = [

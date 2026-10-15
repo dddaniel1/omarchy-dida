@@ -231,12 +231,15 @@ class Completing(unittest.TestCase):
     def test_a_task_and_a_note_travel_with_the_record(self) -> None:
         state = focus.start(
             focus.blank_state(self.settings), now_ms=BASE, settings=self.settings,
-            task_id="t1", note="deep work",
+            task_id="t1", task_title="Write the report", note="deep work",
         )
         state, record = focus.complete(state, now_ms=BASE + 25 * MINUTE)
         self.assertEqual(record["taskId"], "t1")
         self.assertEqual(record["note"], "deep work")
         self.assertEqual(state["task_id"], "t1")  # the break keeps the context
+        self.assertEqual(focus.status(state, now_ms=BASE + 25 * MINUTE)["taskTitle"], "Write the report")
+        self.assertNotIn("taskTitle", record)  # display context stays local
+        self.assertEqual(focus.status(focus.stop(state), now_ms=BASE)["taskTitle"], "")
 
 
 class Records(unittest.TestCase):

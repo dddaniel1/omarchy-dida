@@ -19,7 +19,20 @@ import time
 from datetime import date as _date, datetime, time as _time, timedelta, timezone
 from typing import Any, Callable
 
-from . import __version__, api, auth, config, dates, focus, habits, nlp, render, store, views
+from . import (
+    __version__,
+    api,
+    auth,
+    config,
+    dates,
+    focus,
+    habits,
+    nlp,
+    render,
+    stats,
+    store,
+    views,
+)
 from .errors import (
     ApiError,
     AuthError,
@@ -111,7 +124,7 @@ def _priority(value: str) -> int:
         ) from None
 
 
-def _output_flags() -> argparse.ArgumentParser:
+def _output_flags() -> _Parser:
     """`--json` / `--text`, shared by every subcommand through argparse `parents`.
 
     They have to be real options on every parser rather than something filtered out of
@@ -123,7 +136,7 @@ def _output_flags() -> argparse.ArgumentParser:
     already set, which is what would otherwise make `ticktick --json tasks` silently
     fall back to text.
     """
-    shared = argparse.ArgumentParser(add_help=False)
+    shared = _Parser(add_help=False)
     # Explicit dests: `--text` would otherwise land on `args.text`, which is already
     # the positional holding the task title in `add`, `parse` and `search`. That
     # collision made every one of those commands print prose no matter what.
@@ -298,6 +311,19 @@ def _build_parser() -> _Parser:
     p.add_argument("--limit", type=int, default=None, metavar="N")
 
     p = cmd(
+        "stats",
+        "Account statistics: what got done, what is left, and how it is spread.",
+        _cmd_stats,
+    )
+    p.add_argument("--days", type=int, default=stats.DEFAULT_DAYS, metavar="N",
+                   help="how far the completion trend reaches (default 7; capped at 90)")
+    with_offline(p)
+    p.add_argument("--refresh", action="store_true",
+                   help="refetch even when the cache is fresh")
+    p.add_argument("--max-age", type=float, default=None, metavar="SECONDS",
+                   help="serve the cached reads when they are younger than this")
+
+    p = cmd(
         "habits",
         "List habits with today's state: check-in progress, streaks and counts.",
         _cmd_habits,
@@ -352,6 +378,8 @@ def _build_parser() -> _Parser:
                          choices=(focus.FOCUS, focus.SHORT_BREAK, focus.LONG_BREAK))
     starter.add_argument("--task-id", default="", metavar="TASK_ID",
                          help="attach the finished block to a task")
+    starter.add_argument("--task-title", default="", metavar="TEXT",
+                         help="local display name for the linked task")
     starter.add_argument("--note", default="", metavar="TEXT")
     with_durations(starter)
 
@@ -1141,7 +1169,7 @@ def _cmd_tasks(args: argparse.Namespace) -> dict:
     """The widget's main read. Answers from the local cache, refreshed when it can be."""
     cfg = config.load()
     state = store.load()
-    view = _VIEW_ALIASES.get(args.view, args.view)
+    view = _VIEW_ALIASES.get(str(args.view), str(args.view))
     source, info = _read_source(
         cfg,
         state,
@@ -1413,6 +1441,36 @@ def _cmd_move(args: argparse.Namespace) -> dict:
     }
 
 
+def _completed_rows(
+    client: Any, cfg: dict, tasks: list, now: datetime, *, fallback: str = ""
+) -> list[dict]:
+    """Turn completed API tasks into rows, most recently finished first.
+
+    The same shape `tasks` uses, plus `completed`/`completedLabel`, so the widget paints
+    them with the same delegate. Shared by `completed` and `stats`, which differ only in
+    the window they ask for.
+    """
+    catalogue = views.catalogue(client, cfg)
+    rows = []
+    for task in tasks:
+        pid = str(task.get("projectId") or fallback or "")
+        name, color = _meta(catalogue, pid, cfg)
+        done = dates.parse(task.get("completedTime"))
+        rows.append(
+            {
+                **views.row(
+                    task, project_name=name, project_color=color, now=now,
+                    fallback_project_id=pid,
+                ),
+                "bucket": "completed",
+                "completed": int(done.timestamp()) if done else 0,
+                "completedLabel": dates.label(done, all_day=False, now=now),
+            }
+        )
+    rows.sort(key=lambda item: -item["completed"])  # most recently finished first
+    return rows
+
+
 def _cmd_completed(args: argparse.Namespace) -> dict:
     """Recently finished work: the one endpoint that can see it.
 
@@ -1430,24 +1488,7 @@ def _cmd_completed(args: argparse.Namespace) -> dict:
         startDate=_wire_date(now - timedelta(days=days)),
         endDate=_wire_date(now),
     )
-    catalogue = views.catalogue(client, cfg)
-    rows = []
-    for task in tasks:
-        pid = str(task.get("projectId") or args.project or "")
-        name, color = _meta(catalogue, pid, cfg)
-        done = dates.parse(task.get("completedTime"))
-        rows.append(
-            {
-                **views.row(
-                    task, project_name=name, project_color=color, now=now,
-                    fallback_project_id=pid,
-                ),
-                "bucket": "completed",
-                "completed": int(done.timestamp()) if done else 0,
-                "completedLabel": dates.label(done, all_day=False, now=now),
-            }
-        )
-    rows.sort(key=lambda item: -item["completed"])  # most recently finished first
+    rows = _completed_rows(client, cfg, tasks, now, fallback=args.project or "")
     if args.limit and args.limit > 0:
         rows = rows[: args.limit]
     payload = {
@@ -1468,6 +1509,74 @@ def _cmd_completed(args: argparse.Namespace) -> dict:
             store.CachedSource(state), cfg, view="all", include_undated=True
         )["counts"]
     return payload
+
+
+def _cmd_stats(args: argparse.Namespace) -> dict:
+    """One payload of account statistics: trend, distribution, habits and focus.
+
+    Assembled from the reads the rest of the CLI already makes, so the only new request
+    is the completed-task window, which nothing else can answer. Every piece degrades on
+    its own: a dead link leaves the trend at zero with a warning attached rather than
+    failing the read, because the numbers that did come back are still true, and the
+    widget hides a section it was handed nothing for.
+    """
+    cfg = config.load()
+    state = store.load()
+    now = dates.now()
+    days = stats.clamp_days(args.days)
+    max_age = store.DEFAULT_MAX_AGE if args.max_age is None else args.max_age
+
+    # Open work, from the cache-first read the task poll uses. The distribution is
+    # derived from the same rows the widget renders, so the two cannot disagree.
+    source, info = _read_source(
+        cfg, state, offline=args.offline, force=args.refresh, max_age=max_age
+    )
+    open_payload = views.collect(source, cfg, view="all", include_undated=True)
+    _remember(cfg, open_payload.pop("cache_dirty"))
+
+    client: api.Client | None = None
+    completed_rows: list[dict] = []
+    if not args.offline:
+        # `_read_source` has already built a client and proved the token usable, so this
+        # cannot raise an auth error the top of the command would not have raised first.
+        client = _client(cfg)
+        try:
+            tasks = client.completed_tasks(
+                startDate=_wire_date(now - timedelta(days=days)),
+                endDate=_wire_date(now),
+            )
+            completed_rows = _completed_rows(client, cfg, tasks, now)
+        except (NetworkError, ApiError) as exc:
+            info["warning"] = info["warning"] or str(exc)
+
+    habits_payload: dict | None = None
+    hsource, hinfo = _read_habits(
+        cfg, state, offline=args.offline, force=False, max_age=max_age
+    )
+    try:
+        habits_payload = habits.collect(habits.fetch(hsource))
+    except (NetworkError, ApiError) as exc:
+        info["warning"] = info["warning"] or str(exc)
+    info["habitsSource"] = hinfo.get("source", "cache")
+
+    focus_payload = None
+    try:
+        focus_payload = _focus_tally(cfg, state, client=client, info=info, max_age=max_age)
+    except (NetworkError, ApiError, NotFoundError) as exc:
+        # A missing focus route is the whole account answering 404, not a broken read:
+        # the dashboard loses its focus section and keeps every other number.
+        info["warning"] = info["warning"] or str(exc)
+
+    payload = stats.collect(
+        open_payload["tasks"],
+        completed_rows,
+        now=now,
+        days=days,
+        habits=habits_payload,
+        focus=focus_payload,
+    )
+    store.save_quietly(state)
+    return {**payload, **info}
 
 
 def _cmd_complete(args: argparse.Namespace) -> dict:
@@ -1875,7 +1984,7 @@ def _focus_transition(args: argparse.Namespace, action: str) -> dict:
     if action == "start":
         timer = focus.start(
             timer, now_ms=now_ms, settings=_focus_settings(args),
-            phase=args.phase, task_id=args.task_id, note=args.note,
+            phase=args.phase, task_id=args.task_id, task_title=args.task_title, note=args.note,
         )
     elif action == "pause":
         timer = focus.pause(timer, now_ms=now_ms)
@@ -2107,7 +2216,7 @@ def _assertions() -> int:
     )
     check(dates.label(None, all_day=True, now=now) == "", "no due -> empty label")
     check(
-        sorted(dates.BUCKET_ORDER, key=dates.BUCKET_ORDER.get)
+        sorted(dates.BUCKET_ORDER, key=lambda name: dates.BUCKET_ORDER[name])
         == ["overdue", "today", "tomorrow", "upcoming", "later", "undated"],
         "group order is fixed",
     )

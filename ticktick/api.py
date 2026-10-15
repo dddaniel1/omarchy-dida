@@ -194,7 +194,7 @@ class Client:
 
     # ------------------------------------------------------------------ transport
 
-    def request(self, method: str, path: str, body: dict | None = None) -> Any:
+    def request(self, method: str, path: str, body: dict | list | None = None) -> Any:
         """Perform one API call.
 
         Raises AuthError / NotFoundError / NetworkError / ApiError. Returns parsed JSON, or

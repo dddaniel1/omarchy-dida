@@ -21,6 +21,7 @@ import pathlib
 import sys
 import tempfile
 import unittest
+from datetime import datetime, timezone
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
@@ -100,7 +101,8 @@ class AuthTest(Base):
         for argv in (("tasks",), ("projects",), ("status",), ("sync",),
                      ("complete", "x"), ("delete", "x"), ("add", "hello"),
                      ("edit", "x", "--title", "y"), ("check", "x", "i"),
-                     ("item", "add", "x", "step"), ("tags",), ("search", "x")):
+                     ("item", "add", "x", "step"), ("tags",), ("search", "x"),
+                     ("habits",), ("stats",)):
             with self.subTest(argv=argv):
                 payload = self.run_cli(*argv)
                 self.assertIn("ok", payload)
@@ -213,6 +215,56 @@ class ReadTest(Base):
         tags = self.ok("tags")["tags"]
         self.assertEqual({t["name"] for t in tags}, {"urgent", "errand"})
         self.assertEqual(next(t for t in tags if t["name"] == "errand")["label"], "Errand")
+
+
+# ---------------------------------------------------------------- stats
+
+
+class StatsTest(Base):
+    def setUp(self) -> None:
+        super().setUp()
+        self.login()
+        self.fake.add_task(title="late thing", projectId="p-work",
+                           dueDate="2020-01-01T09:00:00.000+0000", priority=5)
+        self.fake.add_task(title="someday thing", projectId="p-home")
+        self.fake.add_task(title="a note", projectId="p-work", kind="NOTE",
+                           dueDate=datetime.now(timezone.utc).isoformat())
+        self.fake.add_task(title="finished thing", projectId="p-work", status=2,
+                           completedTime=datetime.now(timezone.utc).isoformat())
+
+    def test_the_payload_is_a_dashboard_with_every_section(self):
+        payload = self.ok("stats", "--days", "7")
+        self.assertEqual(payload["days"], 7)
+        self.assertEqual(len(payload["trend"]), 7)
+        self.assertEqual(set(payload["distribution"]),
+                         {"byList", "byPriority", "byBucket", "byTag", "notes", "total"})
+        self.assertIn("summary", payload)
+        # The fake serves no /habit or /focus route, so those sections are zeroed or
+        # absent — but the keys must still be present, or the widget's binding renders
+        # the literal string `undefined`.
+        self.assertIsInstance(payload["habits"], dict)
+        self.assertIn("focus", payload)
+
+    def test_the_distribution_matches_the_open_list_and_excludes_notes(self):
+        payload = self.ok("stats", "--days", "7")
+        self.assertEqual(payload["summary"]["open"], payload["distribution"]["total"])
+        self.assertEqual(payload["summary"]["overdue"], 1)
+        self.assertEqual(payload["distribution"]["notes"], 1)
+        self.assertEqual({e["name"] for e in payload["distribution"]["byList"]},
+                         {"Work", "Home"})
+
+    def test_the_trend_counts_what_was_finished_today(self):
+        payload = self.ok("stats", "--days", "7")
+        self.assertEqual(payload["summary"]["completed"], 1)
+        self.assertEqual(payload["trend"][-1]["count"], 1)
+
+    def test_it_answers_from_the_cache_when_offline(self):
+        self.ok("tasks", "--view", "all", "--include-undated")  # warm the cache
+        self.fake.offline = True
+        payload = self.ok("stats", "--offline", "--days", "3")
+        self.assertEqual(payload["days"], 3)
+        self.assertEqual(len(payload["trend"]), 3)
+        self.assertEqual(payload["summary"]["overdue"], 1)
 
 
 # ------------------------------------------------------- local-first

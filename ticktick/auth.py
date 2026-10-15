@@ -421,7 +421,7 @@ def _handler(result: dict, *, path: str, state: str) -> type[BaseHTTPRequestHand
             self.end_headers()
             self.wfile.write(raw)
 
-        def log_message(self, *args: Any) -> None:
+        def log_message(self, format: str, *args: Any) -> None:
             """Silence the default stderr access log; the CLI owns the console."""
 
     return CallbackHandler

@@ -139,6 +139,7 @@ def blank_state(settings: Prefs | None = None) -> dict:
         "pause_started_at": 0,
         "blocks_done": 0,
         "task_id": "",
+        "task_title": "",
         "note": "",
         "prefs": (settings or Prefs()).as_dict(),
     }
@@ -169,6 +170,7 @@ def normalise(state: Any) -> dict:
         {
             "phase": phase,
             "task_id": str(state.get("task_id") or ""),
+            "task_title": str(state.get("task_title") or ""),
             "note": str(state.get("note") or ""),
         }
     )
@@ -182,7 +184,7 @@ def normalise(state: Any) -> dict:
 
 
 def is_running(state: dict) -> bool:
-    return normalise(state)["phase"] != IDLE and _int(normalise(state).get("ends_at")) > 0
+    return normalise(state)["phase"] != IDLE and (_int(normalise(state).get("ends_at")) or 0) > 0
 
 
 def is_paused(state: dict) -> bool:
@@ -197,7 +199,7 @@ def remaining_ms(state: dict, now_ms: int) -> int:
         return 0
     if state["ends_at"]:
         return max(0, state["ends_at"] - int(now_ms))
-    return max(0, _int(state.get("paused_left_ms")))
+    return max(0, _int(state.get("paused_left_ms")) or 0)
 
 
 def elapsed_ms(state: dict, now_ms: int) -> int:
@@ -215,6 +217,7 @@ def start(
     settings: Prefs | None = None,
     phase: str = FOCUS,
     task_id: str = "",
+    task_title: str = "",
     note: str = "",
 ) -> dict:
     """Begin a block. Starting over abandons whatever was running, unlodged.
@@ -233,6 +236,7 @@ def start(
             "ends_at": int(now_ms) + phase_seconds(phase, settings) * 1000,
             "blocks_done": _int(normalise(state).get("blocks_done")) or 0,
             "task_id": str(task_id or ""),
+            "task_title": str(task_title or ""),
             "note": str(note or ""),
         }
     )
@@ -255,7 +259,7 @@ def resume(state: dict, *, now_ms: int) -> dict:
     out = normalise(state)
     if out["phase"] == IDLE or out["ends_at"]:
         return out
-    left = _int(out.get("paused_left_ms"))
+    left = _int(out.get("paused_left_ms")) or 0
     out["ends_at"] = int(now_ms) + max(0, left)
     out["paused_left_ms"] = 0
     if out["pause_started_at"]:
@@ -277,6 +281,7 @@ def stop(state: dict) -> dict:
             "paused_left_ms": 0,
             "pause_started_at": 0,
             "task_id": "",
+            "task_title": "",
             "note": "",
         }
     )
@@ -321,6 +326,7 @@ def complete(state: dict, *, now_ms: int) -> tuple[dict, dict | None]:
                 "ends_at": int(now_ms) + phase_seconds(follow, settings) * 1000,
                 "blocks_done": blocks,
                 "task_id": current.get("task_id") or "",
+                "task_title": current.get("task_title") or "",
                 "note": current.get("note") or "",
             }
         )
@@ -476,6 +482,7 @@ def status(state: dict, *, now_ms: int, settings: Prefs | None = None) -> dict:
         "clock": clock_text(left) if phase != IDLE else "",
         "blocksDone": _int(state.get("blocks_done")) or 0,
         "taskId": str(state.get("task_id") or ""),
+        "taskTitle": str(state.get("task_title") or ""),
         "prefs": settings.as_dict(),
         "startedAt": _int(state.get("started_at")) or 0,
     }

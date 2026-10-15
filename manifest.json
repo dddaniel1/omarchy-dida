@@ -32,6 +32,7 @@
       "includeUndated": false,
       "confirmDelete": true,
       "showHabits": true,
+      "showStats": true,
       "showFocus": true,
       "focusMinutes": 0,
       "shortBreakMinutes": 0,
@@ -107,6 +108,8 @@
           "Inbox",
           "All",
           "Lists",
+          "Habits",
+          "Stats",
           "Completed"
         ],
         "defaultValue": "Today"
@@ -151,6 +154,13 @@
         "type": "boolean",
         "label": "Show habits",
         "description": "A Habits view with today's check-in state, streaks, and a count in the bar.",
+        "defaultValue": true
+      },
+      {
+        "key": "showStats",
+        "type": "boolean",
+        "label": "Show statistics",
+        "description": "A Stats view: completed-per-day trend, open work by list, notes, priority and tag, plus habit and focus summaries.",
         "defaultValue": true
       },
       {

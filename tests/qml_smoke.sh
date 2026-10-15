@@ -39,8 +39,18 @@ info "starting the fake TickTick API…"
 python3 - "$WORK" "$ROOT" <<'PY' > "$WORK/fake.log" 2>&1 &
 import json, pathlib, sys, time
 sys.path.insert(0, sys.argv[2])  # the repo root, so `tests.fake_ticktick` imports
-from tests.fake_ticktick import Server, TOKEN
+from tests.fake_ticktick import Server, TOKEN, _Handler
 from datetime import datetime, timedelta
+
+original_get = _Handler.do_GET
+
+def focus_get(self):
+    if self.path.split("?", 1)[0] == "/open/v1/focus":
+        self._send(200, [])
+    else:
+        original_get(self)
+
+_Handler.do_GET = focus_get
 
 work = pathlib.Path(sys.argv[1])
 s = Server(); s.__enter__()
@@ -146,8 +156,40 @@ ShellRoot {
                   + "|" + subject.sectionFor(2))
       subject.open()
       Qt.callLater(function () {
-        // Every tab, in the order the number keys walk them.
+        // Find the sidebar and verify it tracks the shortcut-driven view, and that
+        // selecting a nav entry drives the service. (The old view-picker probe.)
+        function findSidebar(item) {
+          if (item.objectName === "sidebar") return item
+          var children = item.children || []
+          for (var c = 0; c < children.length; c++) {
+            var found = findSidebar(children[c])
+            if (found) return found
+          }
+          return null
+        }
+        var nav = findSidebar(subject.panel.contentItem[0])
+        if (nav) {
+          subject.setView("tomorrow")
+          console.log("SMOKE navTracks=" + (nav.currentView === "tomorrow"))
+          nav.viewSelected("inbox")
+          console.log("SMOKE navSelect=" + subject.service.view)
+          // The keyboard cursor walks the flat model and never lands on a header.
+          subject.focusSidebar()
+          nav.ensureCursor()
+          console.log("SMOKE sidebarCursor=" + subject.focusPane + ":"
+                      + (nav.selectable(nav.cursorIndex) ? "ok" : "bad"))
+          // Moving previews: the highlight moves and the task pane follows it.
+          var previewFrom = subject.service.view
+          subject.sidebarStep(1)
+          console.log("SMOKE preview=" + (subject.service.view !== previewFrom))
+          nav.moveCursor(1); nav.moveCursor(1); nav.moveCursor(1)
+          console.log("SMOKE sidebarStep=" + (nav.selectable(nav.cursorIndex) ? "ok" : "bad"))
+          subject.focusList()
+        }
+        // Every view, in the order the number keys walk them.
         for (var i = 0; i < subject.views.length; i++) subject.setView(subject.views[i])
+        subject.setView("habits")
+        console.log("SMOKE habitTaskView=" + subject.service.readArgs()[2])
         subject.cycleView(1); subject.cycleView(-1)
         subject.moveCursor(1); subject.moveCursor(-1)
         subject.openSearch(); subject.closeSearch(true)
@@ -210,8 +252,26 @@ ShellRoot {
                     + " status=" + subject.service.actionStatus)
         subject.dismiss()
         console.log("SMOKE done rows=" + subject.rowCount + " sort=" + subject.service.sort)
-        quitTimer.running = true
+        // The Stats view is a dashboard, not a list. Hold on it for a beat so its
+        // Repeaters really lay out — an anchor or binding warning only a polish pass
+        // would raise must not slip past the view-loop, which never gives it a frame.
+        subject.setView("stats")
+        statsProbe.running = true
       })
+    }
+  }
+  Timer {
+    id: statsProbe
+    interval: 700
+    onTriggered: {
+      var s = subject.service.stats || {}
+      var dist = s.distribution || {}
+      console.log("SMOKE stats view=" + subject.service.view
+                  + " days=" + s.days + " trend=" + ((s.trend || []).length)
+                  + " lists=" + ((dist.byList || []).length))
+      subject.setView("today")
+      focusProbe.running = true
+      quitTimer.running = true
     }
   }
   Timer {
@@ -227,7 +287,38 @@ ShellRoot {
     }
   }
 
-  Timer { id: quitTimer; interval: 2500; onTriggered: Qt.quit() }
+  Timer {
+    id: focusProbe
+    property int step: 0
+    property real endsAt: 0
+    interval: 200
+    repeat: true
+    onTriggered: {
+      var s = subject.service
+      if (s.focusBusy) return
+      var task = { id: "focus-task", title: "写报告 <not markup>" }
+      if (step === 0) {
+        s.startFocus(task)
+      } else if (step === 1) {
+        console.log("SMOKE focusLinked=" + (s.focusState.taskId === task.id
+          && s.focusState.taskTitle === task.title && s.focusRunning))
+        endsAt = s.focusEndsAt
+        s.startFocus({ id: "other", title: "Other task" })
+        console.log("SMOKE focusKept=" + (s.focusEndsAt === endsAt && s.focusState.taskId === task.id))
+        s.pauseFocus()
+      } else if (step === 2) {
+        s.startFocus({ id: "other", title: "Other task" })
+        console.log("SMOKE focusPausedKept=" + (s.focusPaused && s.focusState.taskId === task.id
+          && s.focusState.taskTitle === task.title))
+        s.stopFocus()
+      } else {
+        console.log("SMOKE focusStopped=" + (!s.focusActive && s.focusState.taskTitle === ""))
+        Qt.quit()
+      }
+      step += 1
+    }
+  }
+  Timer { id: quitTimer; interval: 15000; onTriggered: Qt.quit() }
 }
 QML
 
@@ -254,6 +345,19 @@ fi
 
 # Today = overdue + today: "Renew domain", "Submit report", "Call the bank", plus the
 # note that is also due today. Tomorrow's and the undated one are correctly excluded.
+for marker in focusLinked focusKept focusPausedKept focusStopped; do
+  grep -q "SMOKE $marker=true" "$WORK/clean.log" || fail "focus association check failed: $marker"
+done
+grep -q "SMOKE navTracks=true" "$WORK/clean.log" || fail "the sidebar stopped tracking the view"
+grep -q "SMOKE navSelect=inbox" "$WORK/clean.log" || fail "selecting a sidebar item did not change the view"
+grep -q "SMOKE sidebarCursor=sidebar:ok" "$WORK/clean.log" || fail "the sidebar keyboard cursor did not land on a row"
+grep -q "SMOKE preview=true" "$WORK/clean.log" || fail "moving the sidebar cursor did not preview the list"
+grep -q "SMOKE sidebarStep=ok" "$WORK/clean.log" || fail "the sidebar cursor stepped onto a header or off the end"
+grep -q "SMOKE habitTaskView=all" "$WORK/clean.log" || fail "habit view reached the task CLI"
+# The Stats view must actually render its dashboard — the trend over the completed
+# window, and the open work grouped by list — not merely exist in the view list.
+grep -q "SMOKE stats view=stats days=7 trend=7 lists=3" "$WORK/clean.log" \
+  || { cat "$WORK/clean.log"; fail "the Stats view did not render its dashboard"; }
 grep -q "SMOKE rows=4" "$WORK/clean.log" \
   || { cat "$WORK/clean.log"; fail "expected 4 rows (1 overdue + 2 today + 1 note) in Today"; }
 # …but the badge counts only the three real tasks. A note has no checkbox, so

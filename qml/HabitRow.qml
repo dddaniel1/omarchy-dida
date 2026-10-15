@@ -31,8 +31,7 @@ CursorSurface {
   readonly property color dim: Qt.darker(foreground, 1.5)
   readonly property color markColor: done ? Color.accent : (hasCursor ? foreground : dim)
 
-  implicitHeight: Math.max(mark.implicitHeight, name.implicitHeight, trailing.implicitHeight)
-    + Style.spacing.xl
+  implicitHeight: Math.max(mark.implicitHeight, labels.implicitHeight) + Style.spacing.lg
 
   MouseArea {
     anchors.fill: parent
@@ -57,54 +56,60 @@ CursorSurface {
     font.pixelSize: Style.font.subtitle
   }
 
-  Text {
-    id: name
+  Column {
+    id: labels
     anchors.left: mark.right
     anchors.leftMargin: Style.spacing.controlGap
-    anchors.right: trailing.left
-    anchors.rightMargin: Style.spacing.md
-    anchors.verticalCenter: parent.verticalCenter
-    text: root.nameText
-    textFormat: Text.PlainText
-    // A finished day steps back the way a finished task does; so does one that is not
-    // due at all, because neither is asking for anything right now.
-    color: (root.done || !root.dueToday) ? root.dim : root.foreground
-    font.family: root.fontFamily
-    font.pixelSize: Style.font.body
-    elide: Text.ElideRight
-  }
-
-  Row {
-    id: trailing
     anchors.right: parent.right
     anchors.rightMargin: Style.spacing.rowPaddingX
     anchors.verticalCenter: parent.verticalCenter
-    spacing: Style.spacing.md
+    spacing: Style.spacing.xs
 
     Text {
-      // A streak is worth protecting, so it keeps the accent even on a day that is
-      // not done yet — that is exactly when it is at risk.
-      visible: root.streakText !== ""
-      text: root.streakText
-      color: Color.accent
+      id: name
+      width: parent.width
+      text: root.nameText
+      textFormat: Text.PlainText
+      // A finished day steps back the way a finished task does; so does one that is not
+      // due at all, because neither is asking for anything right now.
+      color: (root.done || !root.dueToday) ? root.dim : root.foreground
       font.family: root.fontFamily
-      font.pixelSize: Style.font.bodySmall
+      font.pixelSize: Style.font.body
+      elide: Text.ElideRight
     }
 
-    Text {
-      visible: root.tallyText !== ""
-      text: root.tallyText
-      color: root.done ? Color.accent : root.dim
-      font.family: root.fontFamily
-      font.pixelSize: Style.font.bodySmall
-    }
+    Flow {
+      id: trailing
+      width: parent.width
+      spacing: Style.spacing.md
 
-    Text {
-      visible: !root.dueToday
-      text: "not today"
-      color: root.dim
-      font.family: root.fontFamily
-      font.pixelSize: Style.font.caption
+      Text {
+        // A streak is worth protecting, so it keeps the accent even on a day that is
+        // not done yet — that is exactly when it is at risk.
+        visible: root.streakText !== ""
+        text: root.streakText
+        color: Color.accent
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.bodySmall
+      }
+
+      Text {
+        visible: root.tallyText !== ""
+        width: Math.min(implicitWidth, trailing.width)
+        elide: Text.ElideRight
+        text: root.tallyText
+        color: root.done ? Color.accent : root.dim
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.bodySmall
+      }
+
+      Text {
+        visible: !root.dueToday
+        text: "not today"
+        color: root.dim
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.caption
+      }
     }
   }
 }

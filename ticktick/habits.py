@@ -87,7 +87,7 @@ def checkin_for(
         return None
     for entry in entries_for(checkins, habit_id):
         try:
-            if int(entry.get("stamp")) == int(day_stamp):
+            if int(entry.get("stamp") or 0) == int(day_stamp):
                 return entry
         except (TypeError, ValueError):
             continue
@@ -314,6 +314,22 @@ def checkin_payload(
 # --- rows --------------------------------------------------------------------
 
 
+def prettify_section(name: str) -> str:
+    """The section name as a heading a person would recognise.
+
+    Dida365 stores its built-in habit sections with internal names — a live account
+    returns `_morning` and `_night` — and rendering those verbatim puts an underscore
+    and a capitalised fragment in front of the user. The leading underscores go, the
+    rest is left exactly as the account has it, and only the very first character is
+    raised, so a real name like "reading list" survives intact and a Chinese one is
+    untouched by an operation its script has no case for.
+    """
+    text = str(name or "").strip().lstrip("_").strip().replace("_", " ")
+    if not text:
+        return ""
+    return text[0].upper() + text[1:]
+
+
 def row(
     habit: dict,
     checkins: dict[str, list[dict]],
@@ -349,7 +365,7 @@ def row(
         "totalCheckIns": _int(habit.get("totalCheckIns")) or 0,
         "encouragement": str(habit.get("encouragement") or ""),
         "sectionId": section_id,
-        "section": str((sections or {}).get(section_id) or ""),
+        "section": prettify_section((sections or {}).get(section_id) or ""),
         "repeatRule": str(habit.get("repeatRule") or ""),
         "targetDays": _int(habit.get("targetDays")) or 0,
         "due": is_due(habit, today),
@@ -455,7 +471,7 @@ def collect(
     """The payload `ticktick habits` emits: rows, sections, counts and the day stamp."""
     today_stamp = stamp_of(snapshot.today)
     names = {
-        str(s.get("id") or ""): str(s.get("name") or "")
+        str(s.get("id") or ""): prettify_section(str(s.get("name") or ""))
         for s in snapshot.sections
         if s.get("id")
     }
@@ -472,7 +488,7 @@ def collect(
     return {
         "habits": rows,
         "sections": [
-            {"id": str(s.get("id") or ""), "name": str(s.get("name") or "")}
+            {"id": str(s.get("id") or ""), "name": prettify_section(str(s.get("name") or ""))}
             for s in sorted(
                 snapshot.sections, key=lambda s: _int(s.get("sortOrder")) or 0
             )
@@ -586,6 +602,7 @@ __all__ = [
     "next_checkin",
     "checkin_payload",
     "row",
+    "prettify_section",
     "counts",
     "fetch",
     "collect",

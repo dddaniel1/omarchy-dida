@@ -1,5 +1,6 @@
 # local tool state
 /.impeccable
+/.serena/
 
 # Python
 __pycache__/

@@ -68,7 +68,7 @@ Item {
       color: Qt.darker(root.foreground, 1.4)
       font.family: root.fontFamily
       font.pixelSize: Style.font.caption
-      elide: Text.ElideRight
+      wrapMode: Text.WordWrap
     }
   }
 }

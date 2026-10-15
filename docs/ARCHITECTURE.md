@@ -34,7 +34,7 @@
    └──────────┬──────────────────────────┬──────────────────────┘
               │                          │  HTTPS
               ▼                          ▼
-   $XDG_STATE_HOME/ticktick/     api.ticktick.com/open/v1
+   $XDG_STATE_HOME/ticktick/     api.dida365.com/open/v1
    state.json (cache + outbox)
 ```
 
@@ -288,7 +288,7 @@ is the behaviour that regresses.
 
 ## Testing
 
-165 tests under `unittest`, no third-party dependencies.
+369 tests under `unittest`, no third-party dependencies.
 
 The end-to-end suite drives `cli.main(argv)` exactly as `bin/ticktick` does, against
 `tests/fake_ticktick.py` — a stand-in TickTick served over real HTTP on loopback. Talking real

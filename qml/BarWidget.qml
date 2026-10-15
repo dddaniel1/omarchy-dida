@@ -12,6 +12,12 @@ import "Model.js" as Model
 // Python behind bin/ticktick. This file's whole job is to turn key presses and
 // clicks into Service calls, and rows into pixels.
 //
+// The popup follows the Dida365 app's shape: a left sidebar (Sidebar.qml) holding
+// the smart lists, the user's lists and the focus timer, and a right pane holding
+// the tasks of whatever is selected, with quick-add along the bottom. The keyboard
+// model is unchanged — the sidebar is click- and shortcut-driven, the cursor stays
+// in the task list.
+//
 // Three host contracts this file is written against, all of which bite silently
 // when broken:
 //
@@ -65,9 +71,11 @@ Panel {
   property bool cursorActive: false
   property int cursorIndex: 0
   property string expandedId: ""
-  property bool searching: false
   property bool adding: false
   property bool filtering: false
+  // Which pane owns the keyboard: the task list (default) or the sidebar. Only the
+  // focused pane shows a cursor, so a highlight never appears in both at once.
+  property string focusPane: "list"
   // The token field is the fallback, revealed only when asked for, so the signed-out
   // panel leads with the one button most people want.
   property bool pastingToken: false
@@ -78,21 +86,22 @@ Panel {
   // activateRequested. This flag is how the two are told apart.
   property bool _returnConsumed: false
 
-  // TickTick's own smart lists, in its own sidebar order, plus the user's lists.
-  // The number keys follow this order, so it is the one place it is written down.
+  // TickTick's own smart lists, in its sidebar order, plus Done and (optionally)
+  // Habits. The number keys follow this order, so it is the one place it is written
+  // down, and Sidebar draws the same five smart lists above them.
   readonly property var viewOptions: {
     var out = [
       { value: "today", label: "Today" },
       { value: "tomorrow", label: "Tomorrow" },
       { value: "next", label: "Next 7" },
       { value: "inbox", label: "Inbox" },
-      { value: "all", label: "All" },
-      { value: "project", label: "Lists" },
-      { value: "completed", label: "Done" }
+      { value: "all", label: "All" }
     ]
-    // Only offered when the section is switched on, so the tab strip, the number keys
+    // Only offered when the section is switched on, so the sidebar, the number keys
     // and the bar badge all disappear together rather than disagreeing.
     if (tt.showHabits) out.push({ value: "habits", label: "Habits" })
+    if (tt.showStats) out.push({ value: "stats", label: "Stats" })
+    out.push({ value: "completed", label: "Done" })
     return out
   }
   readonly property var views: {
@@ -101,61 +110,43 @@ Panel {
     return out
   }
 
-  // The Lists tab shows the list of lists until one is picked; after that it is
-  // an ordinary task list scoped to that list.
-  readonly property bool pickingProject: tt.view === "project" && tt.projectFilter === ""
+  // The list a single project is scoped to, if any. The sidebar owns list picking now,
+  // so a project is just the "project" view with a filter, never a picker screen.
+  readonly property bool projectFilterActive: tt.view === "project" && tt.projectFilter !== ""
   readonly property bool showingHabits: tt.view === "habits"
+  readonly property bool showingStats: tt.view === "stats"
+
   // Habits join the same cursor, section and delegate machinery the tasks use, rather
   // than getting a list of their own: one cursor, one set of keys, one way to draw a row.
-  readonly property var rows: {
-    if (showingHabits) return tt.habits || []
-    if (pickingProject) return sortedProjects
-    return tt.tasks || []
-  }
+  // Stats have no rows at all: the dashboard owns the whole pane.
+  readonly property var rows: widget.showingStats ? []
+    : widget.showingHabits ? (tt.habits || []) : (tt.tasks || [])
   readonly property int rowCount: rows.length
 
-  // Folders, the way TickTick's sidebar shows them: loose lists first (the Inbox is
-  // one), then each folder's lists together. A folder the catalogue does not name
-  // sorts last rather than first, which an unranked 0 would have done.
-  readonly property var groupRank: {
-    var out = {}
-    var list = tt.groups || []
-    for (var i = 0; i < list.length; i++) out[String(list[i].id || "")] = i
-    return out
-  }
-
-  function groupRankOf(project) {
-    var gid = String((project || {}).groupId || "")
-    if (gid === "") return -1
-    var rank = widget.groupRank[gid]
-    return rank === undefined ? 1e6 : rank
-  }
-
-  function groupNameOf(project) {
-    var gid = String((project || {}).groupId || "")
-    if (gid === "") return "Lists"
-    var list = tt.groups || []
-    for (var i = 0; i < list.length; i++) {
-      if (String(list[i].id || "") === gid) return Model.squish(list[i].name) || "Folder"
+  // The header's own count. Notes are excluded the same way the sidebar and the bar
+  // badge exclude them, so the two numbers can never look like different accounts.
+  readonly property int paneCount: {
+    var n = 0
+    for (var i = 0; i < rowCount; i++) {
+      if (widget.showingHabits || !Model.isNote(rows[i])) n += 1
     }
-    return "Folder"
+    return n
   }
 
-  readonly property var sortedProjects: {
-    var list = tt.projects || []
-    // Decorated with the original index so lists inside one folder keep the order
-    // TickTick gave them — Array.prototype.sort is not required to be stable in
-    // every JS engine, and the Inbox leading the list is not negotiable.
-    var decorated = []
-    for (var i = 0; i < list.length; i++) decorated.push({ project: list[i], at: i })
-    decorated.sort(function (a, b) {
-      var ra = widget.groupRankOf(a.project)
-      var rb = widget.groupRankOf(b.project)
-      return ra !== rb ? ra - rb : a.at - b.at
-    })
-    var out = []
-    for (var j = 0; j < decorated.length; j++) out.push(decorated[j].project)
-    return out
+  // What the task pane's heading says: the list's own name when scoped to one, otherwise
+  // the smart list's label.
+  function viewLabel() {
+    if (widget.projectFilterActive) {
+      var list = tt.projects || []
+      for (var i = 0; i < list.length; i++) {
+        if (String(list[i].id || "") === String(tt.projectFilter)) return Model.squish(list[i].name) || "List"
+      }
+      return "List"
+    }
+    for (var j = 0; j < viewOptions.length; j++) {
+      if (viewOptions[j].value === tt.view) return viewOptions[j].label
+    }
+    return "Tasks"
   }
 
   readonly property string summary: {
@@ -170,7 +161,10 @@ Panel {
     return "Nothing due"
   }
 
-  readonly property string badgeText: tt.authed ? Model.barLabel(tt.badgeCount, tt.habitBadge) : "!"
+  // The bar shows one number: the task badge. The habit count used to ride along
+  // as a second "2♦" beside it, which read as a separate widget rather than one count.
+  readonly property string badgeText: !tt.authed ? "!"
+    : (tt.badgeCount > 0 ? String(tt.badgeCount) : "")
 
   // --- helpers ----------------------------------------------------------
 
@@ -186,19 +180,12 @@ Panel {
   }
 
   function selectedTask() {
-    // Habits and the list picker share this cursor, so neither may be handed back as
-    // a task: a caller that completed or deleted one would be addressing the wrong row.
-    if (pickingProject || showingHabits) return null
+    if (widget.showingHabits || widget.showingStats) return null
     return (cursorIndex >= 0 && cursorIndex < rowCount) ? rows[cursorIndex] : null
   }
 
   function selectedHabit() {
-    if (!showingHabits) return null
-    return (cursorIndex >= 0 && cursorIndex < rowCount) ? rows[cursorIndex] : null
-  }
-
-  function selectedProject() {
-    if (!pickingProject) return null
+    if (!widget.showingHabits) return null
     return (cursorIndex >= 0 && cursorIndex < rowCount) ? rows[cursorIndex] : null
   }
 
@@ -239,6 +226,42 @@ Panel {
     if (listFlick) listFlick.contentY = 0
     // Habits are not on the task poll, so entering their view is what asks for them.
     if (name === "habits") tt.loadHabits()
+    if (name === "stats") tt.loadStats()
+  }
+
+  // Scope the task pane to one list. The view goes to "project" first (which clears any
+  // previous filter) and the filter lands second, so the two never fight.
+  function openProject(projectId) {
+    var id = String(projectId || "")
+    if (id === "") return
+    tt.setView("project")
+    tt.setProjectFilter(id)
+    cursorIndex = 0
+    expandedId = ""
+    if (listFlick) listFlick.contentY = 0
+  }
+
+  // Move the keyboard into the sidebar: the task cursor steps back so only one row in
+  // the whole card is lit, and the sidebar cursor lands on the current view or list.
+  function focusSidebar() {
+    cursorActive = false
+    focusPane = "sidebar"
+    sidebar.ensureCursor()
+  }
+
+  // …and back into the task list, which resumes showing its cursor where it was.
+  function focusList() {
+    focusPane = "list"
+    cursorActive = true
+  }
+
+  // Move the sidebar cursor AND show what it lands on, so browsing lists reads like the
+  // app: arrowing previews each list in the task pane. The helper is cache-first, so
+  // this is a local re-derive unless the cache is genuinely stale, and Service coalesces
+  // its refreshes — holding a key does not spray requests.
+  function sidebarStep(delta) {
+    sidebar.moveCursor(delta)
+    sidebar.activateCurrent()
   }
 
   // The section a row opens, or "" when the row above already opened it. What the
@@ -257,15 +280,14 @@ Panel {
       if (index > 0 && Model.squish(list[index - 1].section) === name) return ""
       return name.toUpperCase()
     }
-    if (pickingProject) {
-      var name = widget.groupNameOf(list[index])
-      if (index > 0 && widget.groupNameOf(list[index - 1]) === name) return ""
-      return name.toUpperCase()
-    }
-    var key = Model.sectionKey(list[index], tt.effectiveSort)
+    var sort = tt.effectiveSort
+    // Under the list sort the heading is the list's own name; when the pane is already
+    // scoped to a single list, that heading is the title right above it and only repeats it.
+    if (sort === "list" && (tt.view === "inbox" || widget.projectFilterActive)) return ""
+    var key = Model.sectionKey(list[index], sort)
     if (key === "") return ""
-    if (index > 0 && Model.sectionKey(list[index - 1], tt.effectiveSort) === key) return ""
-    return Model.sectionLabel(list[index], tt.effectiveSort).toUpperCase()
+    if (index > 0 && Model.sectionKey(list[index - 1], sort) === key) return ""
+    return Model.sectionLabel(list[index], sort).toUpperCase()
   }
 
   function toggleExpanded(taskId) {
@@ -316,18 +338,16 @@ Panel {
   }
 
   function openSearch() {
-    searching = true
-    Qt.callLater(function () { searchField.forceActiveFocus(); searchField.selectAll() })
+    Qt.callLater(function () { sidebar.focusSearch() })
   }
 
   function closeSearch(clearText) {
     if (clearText) {
       // The field's `text` binding is broken the moment the user types into it,
       // so clearing the service alone would leave the old query on screen.
-      searchField.text = ""
+      sidebar.clearSearch()
       tt.setSearch("")
     }
-    searching = false
     Qt.callLater(function () { keyCatcher.forceActiveFocus() })
   }
 
@@ -342,8 +362,9 @@ Panel {
   // in the detail pane left the popup deaf until it was closed and reopened.
   function reclaimKeys() {
     Qt.callLater(function () {
-      if (widget.opened && !widget.detailPickerOpen && !widget.adding
-          && !widget.searching && !widget.pastingToken) {
+      if (widget.opened && !widget.detailPickerOpen && !sortPicker.popupOpen
+          && !priorityPicker.popupOpen && !tagPicker.popupOpen && !widget.adding
+          && !sidebar.searchFocused && !widget.pastingToken) {
         keyCatcher.forceActiveFocus()
       }
     })
@@ -367,7 +388,9 @@ Panel {
   function dismiss() {
     if (confirmOpen) { cancelDelete(); return }
     if (adding) { closeAdd(); return }
-    if (searching || tt.search !== "") { closeSearch(true); return }
+    if (sidebar.searchFocused || tt.search !== "") { closeSearch(true); return }
+    // Esc out of the sidebar hands the keyboard back to the list rather than closing.
+    if (focusPane === "sidebar") { focusList(); return }
     if (filtering) { toggleFilters(); return }
     if (expandedId !== "") { expandedId = ""; return }
     if (tt.view === "project" && tt.projectFilter !== "") { tt.setProjectFilter(""); return }
@@ -430,11 +453,12 @@ Panel {
     cursorIndex = 0
     expandedId = ""
     adding = false
-    searching = tt.search !== ""
+    focusPane = "list"
     if (listFlick) listFlick.contentY = 0
     // Opening is when the two things the task poll does not carry are worth asking
     // for: the habit list, and today's focus tally.
     if (tt.view === "habits") tt.loadHabits()
+    if (tt.view === "stats") tt.loadStats()
     tt.loadFocus()
     tt.refresh()
     tt.loadTags()  // cheap, and a tag created elsewhere should be filterable here
@@ -493,13 +517,16 @@ Panel {
     // A vertical bar has no room for a number beside the glyph. A running focus block
     // outranks the task count: it is the thing with seconds on it.
     readonly property bool showingClock: tt.showFocus && tt.focusClockText !== ""
-    text: (bar && bar.vertical) ? "󰄲"
-      : "󰄲 " + (showingClock ? tt.focusClockText : widget.badgeText)
+    // The TickTick/Dida mark: an open ring with a check — the app's own logo —
+    // rather than the generic checkbox glyph the box used to be.
+    readonly property string mark: "󰄴"
+    readonly property string barValue: showingClock ? tt.focusClockText : widget.badgeText
+    text: (bar && bar.vertical) ? mark : mark + (barValue === "" ? "" : " " + barValue)
     fontSize: Style.font.caption
     horizontalMargin: 6
     active: tt.authed && (showingClock || Number((tt.counts || {}).overdue || 0) > 0)
     activeColor: widget.urgent
-    tooltipText: "TickTick — " + widget.summary
+    tooltipText: "Dida 365 — " + widget.summary
     onPressed: function (buttonCode) {
       if (buttonCode === Qt.RightButton) tt.refresh()
       else if (buttonCode === Qt.MiddleButton) { widget.open(); Qt.callLater(widget.openAdd) }
@@ -514,8 +541,14 @@ Panel {
     owner: widget
     open: widget.opened
     focusTarget: keyCatcher
-    contentWidth: panel.fittedContentWidth(Style.space(420))
-    contentHeight: panel.fittedContentHeight(column.implicitHeight, Style.space(620))
+    // Wider than a single-column tray: the sidebar needs room for list names and the
+    // task pane for a title plus its metadata. Signed out there is no sidebar, so the
+    // card shrinks to the sign-in form.
+    contentWidth: panel.fittedContentWidth(tt.authed ? Style.space(680) : Style.space(420))
+    // A floor, so the sidebar's own content (smart lists, lists, focus) always has room
+    // even when the selected view holds only a task or two.
+    contentHeight: panel.fittedContentHeight(
+      Math.max(mainColumn.naturalHeight, Style.space(380)), Style.space(640))
 
     // A plain Item wrapping the catcher: when the confirm dialog is up the catcher
     // is `blocked`, which makes it a transparent pass-through, and the unaccepted
@@ -534,10 +567,18 @@ Panel {
         id: keyCatcher
         anchors.fill: parent
         // Any focused text field, an open dropdown, or the modal owns the keyboard.
-        blocked: widget.confirmOpen || widget.detailPickerOpen || tagPicker.popupOpen
-                 || searchField.activeFocus || tokenField.activeFocus || quickAdd.editing
+        blocked: widget.confirmOpen || widget.detailPickerOpen || sortPicker.popupOpen
+                 || priorityPicker.popupOpen || tagPicker.popupOpen
+                 || sidebar.searchFocused || tokenField.activeFocus || quickAdd.editing
 
         onMoveRequested: function (dx, dy) {
+          // The sidebar owns the arrows while it has the keyboard: up/down walk the
+          // nav, and a push to the right hands the keys back to the list.
+          if (widget.focusPane === "sidebar") {
+            if (dy !== 0) widget.sidebarStep(dy)
+            else if (dx > 0) widget.focusList()
+            return
+          }
           if (dx !== 0) { widget.cycleView(dx > 0 ? 1 : -1); return }
           if (dy === 0) return
           if (!widget.cursorActive) { widget.cursorActive = true; return }
@@ -548,13 +589,15 @@ Panel {
         onReturnRequested: {
           widget._returnConsumed = true
           if (!tt.authed) return
-          if (widget.showingHabits) {
-            tt.checkInHabit(widget.selectedHabit())
+          // In the sidebar, Enter commits the highlighted view or list and drops the
+          // keyboard back into the task pane, so the next key is a task key.
+          if (widget.focusPane === "sidebar") {
+            sidebar.activateCurrent()
+            widget.focusList()
             return
           }
-          if (widget.pickingProject) {
-            var project = widget.selectedProject()
-            if (project) tt.setProjectFilter(String(project.id || ""))
+          if (widget.showingHabits) {
+            tt.checkInHabit(widget.selectedHabit())
             return
           }
           widget.completeAt(widget.selectedTask())
@@ -564,21 +607,28 @@ Panel {
         // flag is how Space keeps "expand" to itself.
         onActivateRequested: {
           if (widget._returnConsumed) { widget._returnConsumed = false; return }
-          // A habit has nothing to expand: its whole state is already on the row.
-          if (!tt.authed || widget.pickingProject || widget.showingHabits) return
+          // A habit has nothing to expand: its whole state is already on the row. A
+          // statistic is not a thing to open at all.
+          if (!tt.authed || widget.showingHabits || widget.showingStats
+              || widget.focusPane === "sidebar") return
           var task = widget.selectedTask()
           if (task) widget.toggleExpanded(task.id)
         }
 
         onCloseRequested: widget.dismiss()
-        onDeleteRequested: if (tt.authed && !widget.pickingProject) widget.requestDelete(widget.selectedTask())
-        onTabRequested: function (direction) { widget.cycleView(direction < 0 ? -1 : 1) }
+        onDeleteRequested: if (tt.authed && widget.focusPane === "list"
+                               && !widget.showingHabits && !widget.showingStats)
+                             widget.requestDelete(widget.selectedTask())
+        onTabRequested: function (direction) {
+          if (widget.focusPane === "sidebar") widget.focusList()
+          else widget.focusSidebar()
+        }
 
         // h/j/k/l and x/X are consumed as navigation and delete before they reach
         // here, so nothing below may claim them.
         onTextKey: function (text) {
           if (!tt.authed) return
-          // The number keys walk `viewOptions` in order, so the tab strip and the
+          // The number keys walk `viewOptions` in order, so the sidebar and the
           // shortcuts cannot drift apart when a view is added or reordered.
           var digit = "12345678".indexOf(text)
           if (digit >= 0 && digit < widget.views.length) {
@@ -590,17 +640,23 @@ Panel {
           // Refresh is cache-first by design; this is how you say "go and look now",
           // and it drains anything queued offline on the way.
           case "s": case "S": tt.sync(); break
-          case "a": case "A": widget.openAdd(); break
+          // The list-only verbs stand down in a view with no rows: adding, sorting and
+          // filtering a dashboard would do nothing the user could see.
+          case "a": case "A": if (!widget.showingStats) widget.openAdd(); break
           case "/": widget.openSearch(); break
-          case "o": case "O": tt.cycleSort(); break
-          case "f": case "F": widget.toggleFilters(); break
+          case "o": case "O": if (!widget.showingStats) tt.cycleSort(); break
+          case "f": case "F": if (!widget.showingStats) widget.toggleFilters(); break
           case "d": case "D":
-            if (!widget.pickingProject && !widget.showingHabits) widget.requestDelete(widget.selectedTask())
+            if (widget.focusPane === "list" && !widget.showingHabits && !widget.showingStats) {
+              widget.requestDelete(widget.selectedTask())
+            }
             break
           case "p":
             // Plain `p` stays with task priority: these views had it before there was
             // a timer to start, and taking a working key away is worse than adding one.
-            if (!widget.pickingProject && !widget.showingHabits) widget.cyclePriority(widget.selectedTask())
+            if (widget.focusPane === "list" && !widget.showingHabits && !widget.showingStats) {
+              widget.cyclePriority(widget.selectedTask())
+            }
             break
           // Shift-P drives the focus timer — start, pause, resume.
           case "P":
@@ -609,539 +665,562 @@ Panel {
           }
         }
 
-        Column {
-          id: column
-          width: parent.width
-          spacing: Style.spacing.rowGap
+        // ================================================== signed in
+        //
+        // Two panes straight from the app: a navigation rail and the task list, with
+        // quick-add along the bottom of the list.
+        Row {
+          id: body
+          anchors.fill: parent
+          visible: tt.authed
+          spacing: Style.spacing.lg
 
-          PanelHero {
-            width: parent.width
-            title: "TickTick"
-            meta: widget.summary
-            foreground: widget.foreground
-            fontFamily: widget.fontFamily
-            iconComponent: Component {
-              Text {
-                text: "󰄲"
-                color: Number((tt.counts || {}).overdue || 0) > 0 ? widget.urgent : widget.foreground
-                font.family: widget.fontFamily
-                font.pixelSize: Style.font.display
-              }
-            }
-          }
-
-          // ---------------------------------------------------- signed out
-
-          Column {
-            id: signIn
-            visible: !tt.authed
-            width: parent.width
-            spacing: Style.spacing.rowGap
-
-            Text {
-              width: parent.width
-              text: "Connect your TickTick account to see your tasks here."
-              color: widget.dim
-              font.family: widget.fontFamily
-              font.pixelSize: Style.font.bodySmall
-              wrapMode: Text.WordWrap
-            }
-
-            // The browser flow leads: it is the one people expect from a "sign in"
-            // button, and it needs nothing pasted. It opens a terminal of its own
-            // because it is interactive — it may ask for a client id the first time,
-            // and it waits on a redirect back to localhost.
-            Button {
-              width: parent.width
-              text: "Sign in with browser"
-              bordered: true
-              foreground: widget.foreground
-              fontFamily: widget.fontFamily
-              onClicked: tt.signIn()
-            }
-
-            Text {
-              visible: tt.authMessage !== ""
-              width: parent.width
-              text: tt.authMessage
-              color: widget.urgent
-              font.family: widget.fontFamily
-              font.pixelSize: Style.font.bodySmall
-              wrapMode: Text.WordWrap
-            }
-
-            // The fallback, and the faster path for anyone who already has a token:
-            // folded away until asked for, so the panel leads with one button.
-            Button {
-              visible: !widget.pastingToken
-              width: parent.width
-              text: "Paste an API token instead"
-              bordered: false
-              foreground: widget.dim
-              fontFamily: widget.fontFamily
-              fontSize: Style.font.bodySmall
-              onClicked: {
-                widget.pastingToken = true
-                Qt.callLater(function () { tokenField.forceActiveFocus() })
-              }
-            }
-
-            Text {
-              visible: widget.pastingToken
-              width: parent.width
-              text: "In the TickTick web app: avatar → Settings → Account → API Token."
-              color: widget.dim
-              font.family: widget.fontFamily
-              font.pixelSize: Style.font.caption
-              wrapMode: Text.WordWrap
-            }
-
-            TextField {
-              id: tokenField
-              visible: widget.pastingToken
-              width: parent.width
-              enabled: !tt.authBusy
-              password: true
-              placeholderText: tt.authBusy ? "Checking…" : "API token"
-              foreground: widget.foreground
-              font.family: widget.fontFamily
-              onAccepted: {
-                tt.signInWithToken(text)
-                text = ""
-              }
-            }
-
-            Button {
-              visible: widget.pastingToken
-              width: parent.width
-              text: tt.authBusy ? "Connecting…" : "Connect"
-              bordered: true
-              foreground: widget.foreground
-              fontFamily: widget.fontFamily
-              onClicked: {
-                tt.signInWithToken(tokenField.text)
-                tokenField.text = ""
-              }
-            }
-          }
-
-          // ---------------------------------------------------- signed in
-
-          // A Flow rather than ButtonGroup: ButtonGroup is a plain Row, and seven
-          // smart lists do not fit across a 420px popup on one line. Same Button
-          // chrome, so the chips read identically — they just wrap.
-          Flow {
-            id: viewTabs
-            visible: tt.authed
-            width: parent.width
-            spacing: Style.spacing.md
-
-            Repeater {
-              model: widget.viewOptions
-
-              delegate: Button {
-                required property var modelData
-                text: String(modelData.label)
-                selected: tt.view === String(modelData.value)
-                bordered: true
-                foreground: widget.foreground
-                fontFamily: widget.fontFamily
-                fontSize: Style.font.bodySmall
-                onClicked: widget.setView(String(modelData.value))
-              }
-            }
-          }
-
-          // ---------------------------------------------------- sort & filter
-
-          Row {
-            id: filterBar
-            // A task filter has nothing to say about habits, so the bar stays out of
-            // the way rather than filtering a list it cannot match.
-            visible: tt.authed && widget.filtering && !widget.showingHabits
-            width: parent.width
-            spacing: Style.spacing.md
-
-            Text {
-              anchors.verticalCenter: parent.verticalCenter
-              text: "Filter"
-              color: widget.dim
-              font.family: widget.fontFamily
-              font.pixelSize: Style.font.caption
-            }
-
-            Button {
-              anchors.verticalCenter: parent.verticalCenter
-              text: tt.priorityFilter < 0
-                ? "Any priority"
-                : (Model.priorityLabel(tt.priorityFilter) || "No priority")
-              bordered: true
-              selected: tt.priorityFilter >= 0
-              foreground: widget.foreground
-              fontFamily: widget.fontFamily
-              fontSize: Style.font.caption
-              onClicked: tt.cyclePriorityFilter()
-            }
-
-            Dropdown {
-              id: tagPicker
-              anchors.verticalCenter: parent.verticalCenter
-              width: Style.space(150)
-              label: "Tag"
-              showLabel: false
-              options: widget.tagOptions
-              value: tt.tagFilter
-              foreground: widget.foreground
-              fontFamily: widget.fontFamily
-              onChanged: function (value) { tt.setTagFilter(value) }
-            }
-
-            Button {
-              anchors.verticalCenter: parent.verticalCenter
-              text: "Sort: " + tt.sortLabel()
-              bordered: true
-              foreground: widget.foreground
-              fontFamily: widget.fontFamily
-              fontSize: Style.font.caption
-              onClicked: tt.cycleSort()
-            }
-          }
-
-          TextField {
-            id: searchField
-            visible: tt.authed && (widget.searching || tt.search !== "") && !widget.showingHabits
-            width: parent.width
-            placeholderText: "Search tasks…"
-            foreground: widget.foreground
-            font.family: widget.fontFamily
-            text: tt.search
-            onTextEdited: tt.setSearch(text)
-            onAccepted: widget.closeSearch(false)
-            Keys.onEscapePressed: widget.closeSearch(true)
-          }
-
-          QuickAdd {
-            id: quickAdd
-            visible: tt.authed && widget.adding
-            width: parent.width
+          Sidebar {
+            id: sidebar
+            objectName: "sidebar"
             service: tt
+            cursorActive: widget.focusPane === "sidebar"
+            width: Style.space(188)
+            height: parent.height
             foreground: widget.foreground
+            accent: Color.accent
             fontFamily: widget.fontFamily
-            onSubmitted: function (text) {
-              tt.add(text)
-              widget.closeAdd()
-            }
-            onDismissed: widget.closeAdd()
+            showHabits: tt.showHabits
+            showStats: tt.showStats
+            onViewSelected: function (value) { widget.setView(value) }
+            onProjectSelected: function (projectId) { widget.openProject(projectId) }
+            onSearchEdited: function (text) { tt.setSearch(text) }
+            onSearchCancelled: widget.closeSearch(true)
           }
 
-          Text {
-            id: statusLine
-            visible: tt.authed && (tt.actionStatus !== "" || tt.errorText !== "")
-            width: parent.width
-            text: tt.actionStatus !== "" ? tt.actionStatus : tt.errorText
-            color: tt.actionStatus !== "" ? widget.dim : widget.urgent
-            font.family: widget.fontFamily
-            font.pixelSize: Style.font.bodySmall
-            wrapMode: Text.WordWrap
-          }
+          // The task pane. A hairline between the two panes is the app's own divider,
+          // drawn here rather than as row spacing so it reaches the card's full height.
+          Item {
+            id: mainPane
+            width: Math.max(0, parent.width - sidebar.width - body.spacing)
+            height: parent.height
 
-          // ---- the focus timer
-          //
-          // Persistent across every view, because a pomodoro is not a list: it is a
-          // clock that keeps running while you look at something else. It sits above the
-          // separator, so it never scrolls away with the rows.
-          Row {
-            id: focusStrip
-            visible: tt.showFocus && tt.authed
-            width: parent.width
-            spacing: Style.spacing.md
-
-            Text {
-              anchors.verticalCenter: parent.verticalCenter
-              // The clock when there is one to show, the word when there is not, so the
-              // strip never changes width as a block starts and stops.
-              text: tt.focusActive ? tt.focusClockText : Model.focusPhaseLabel("focus")
-              color: tt.focusActive ? widget.foreground : widget.dim
-              font.family: widget.fontFamily
-              font.pixelSize: Style.font.subtitle
+            Rectangle {
+              id: paneDivider
+              width: 1
+              anchors.top: parent.top
+              anchors.bottom: parent.bottom
+              anchors.left: parent.left
+              color: Qt.rgba(widget.foreground.r, widget.foreground.g, widget.foreground.b, 0.12)
             }
-
-            Text {
-              anchors.verticalCenter: parent.verticalCenter
-              text: tt.focusActive
-                ? (Model.focusPhaseLabel((tt.focusState || {}).phase)
-                   + (tt.focusPaused ? " · paused" : "")
-                   + (tt.focusBlocksDone > 0 ? " · " + tt.focusBlocksDone + " done" : ""))
-                : Model.focusPrefsLabel((tt.focusState || {}).prefs)
-              color: widget.dim
-              font.family: widget.fontFamily
-              font.pixelSize: Style.font.bodySmall
-            }
-
-            Item { width: Math.max(0, parent.width - 240); height: 1 }
-
-            Button {
-              visible: !tt.focusActive
-              text: "Start"
-              iconText: "󰐊"
-              foreground: widget.foreground
-              fontFamily: widget.fontFamily
-              fontSize: Style.font.bodySmall
-              onClicked: tt.startFocus()
-            }
-
-            Button {
-              visible: tt.focusRunning
-              text: "Pause"
-              iconText: "󰏤"
-              foreground: widget.foreground
-              fontFamily: widget.fontFamily
-              fontSize: Style.font.bodySmall
-              onClicked: tt.pauseFocus()
-            }
-
-            Button {
-              visible: tt.focusPaused
-              text: "Resume"
-              iconText: "󰐊"
-              foreground: widget.foreground
-              fontFamily: widget.fontFamily
-              fontSize: Style.font.bodySmall
-              onClicked: tt.resumeFocus()
-            }
-
-            Button {
-              visible: tt.focusActive
-              // Discard, and nothing else: the account counts finished pomodoros, and
-              // banking half a block would inflate a statistic it shows everywhere.
-              iconText: "󰓛"
-              tooltipText: "Discard this block without recording it"
-              foreground: widget.dim
-              fontFamily: widget.fontFamily
-              fontSize: Style.font.bodySmall
-              onClicked: tt.stopFocus()
-            }
-          }
-
-          // Today's focus total, and its staleness when it is not live.
-          Text {
-            visible: tt.showFocus && tt.authed
-            width: parent.width
-            text: "  " + Model.focusTallyLabel(tt.focusTally)
-            color: widget.dim
-            font.family: widget.fontFamily
-            font.pixelSize: Style.font.caption
-          }
-
-          // Breadcrumb back out of a single project.
-          Button {
-            visible: tt.authed && tt.view === "project" && tt.projectFilter !== ""
-            text: "← All lists"
-            leftAlign: true
-            foreground: widget.dim
-            fontFamily: widget.fontFamily
-            fontSize: Style.font.bodySmall
-            onClicked: tt.setProjectFilter("")
-          }
-
-          PanelSeparator {
-            visible: tt.authed
-            foreground: widget.foreground
-          }
-
-          Text {
-            visible: tt.authed && tt.loaded && widget.rowCount === 0
-            width: parent.width
-            text: widget.showingHabits ? "No habits set up. Add one in Dida365."
-                : tt.search !== "" ? "Nothing matches “" + Model.elide(tt.search, 30) + "”"
-                : (tt.priorityFilter >= 0 || tt.tagFilter !== "") ? "Nothing matches that filter"
-                : tt.view === "completed" ? "Nothing finished recently"
-                : "Nothing due. Enjoy it."
-            color: widget.dim
-            font.family: widget.fontFamily
-            font.pixelSize: Style.font.body
-            horizontalAlignment: Text.AlignHCenter
-          }
-
-          Flickable {
-            id: listFlick
-            visible: tt.authed && widget.rowCount > 0
-            width: parent.width
-            height: visible ? Math.min(listColumn.implicitHeight, Style.space(430)) : 0
-            contentWidth: width
-            contentHeight: listColumn.implicitHeight
-            clip: true
-            boundsBehavior: Flickable.StopAtBounds
-            flickableDirection: Flickable.VerticalFlick
-            interactive: contentHeight > height
-            ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
 
             Column {
-              id: listColumn
-              width: listFlick.width
-              spacing: Style.spacing.xs
+              id: mainColumn
+              anchors.left: paneDivider.right
+              anchors.leftMargin: Style.spacing.lg
+              anchors.right: parent.right
+              anchors.top: parent.top
+              height: parent.height
+              spacing: Style.spacing.md
 
-              Repeater {
-                model: widget.rows
+              // Intrinsic height for the panel to fit to; it never lets the list drive
+              // the card past its cap, which is why the list is clamped here too.
+              readonly property real naturalHeight:
+                  paneHeader.implicitHeight + Style.spacing.md
+                + paneRule.height
+                + (filterBar.visible ? filterBar.implicitHeight + spacing : 0)
+                + (listFlick.visible ? Math.min(listColumn.implicitHeight, Style.space(430)) + spacing : 0)
+                + (statsFlick.visible ? Math.min(statsPane.implicitHeight, Style.space(430)) + spacing : 0)
+                + (emptyState.visible ? emptyState.implicitHeight + spacing : 0)
+                + (statusLine.visible ? statusLine.implicitHeight + spacing : 0)
+                + (quickAddBar.visible ? quickAddBar.implicitHeight + spacing : 0)
+                + spacing
 
-                delegate: Column {
-                  id: entry
-                  required property int index
-                  required property var modelData
+              // ---- header: what list you are looking at, and the tools
+              Item {
+                id: paneHeader
+                width: parent.width
+                implicitHeight: Math.max(paneTitle.implicitHeight, paneCount.implicitHeight, paneTools.implicitHeight)
 
-                  readonly property bool isProject: widget.pickingProject
-                  readonly property string rowId: String(modelData && modelData.id ? modelData.id : "")
-                  readonly property bool onCursor: widget.cursorActive && widget.cursorIndex === entry.index
+                Text {
+                  id: paneTitle
+                  anchors.left: parent.left
+                  anchors.right: paneCount.visible ? paneCount.left : paneTools.left
+                  anchors.rightMargin: Style.spacing.sm
+                  anchors.verticalCenter: parent.verticalCenter
+                  text: widget.viewLabel()
+                  textFormat: Text.PlainText
+                  color: widget.foreground
+                  font.family: widget.fontFamily
+                  font.pixelSize: Style.font.title
+                  font.bold: true
+                  elide: Text.ElideRight
+                }
 
-                  width: listColumn.width
+                Text {
+                  id: paneCount
+                  visible: text !== ""
+                  anchors.right: paneTools.left
+                  anchors.rightMargin: Style.spacing.md
+                  anchors.verticalCenter: parent.verticalCenter
+                  text: widget.paneCount > 0 ? String(widget.paneCount) : ""
+                  color: widget.dim
+                  font.family: widget.fontFamily
+                  font.pixelSize: Style.font.caption
+                }
+
+                Row {
+                  id: paneTools
+                  anchors.right: parent.right
+                  anchors.verticalCenter: parent.verticalCenter
                   spacing: Style.spacing.xs
 
-                  PanelSectionHeader {
-                    visible: text !== ""
-                    text: widget.sectionFor(entry.index)
+                  Dropdown {
+                    id: sortPicker
+                    // Habits are not sorted and a dashboard is not a list, so the
+                    // control is not offered in either.
+                    visible: !widget.showingHabits && !widget.showingStats
+                    width: Math.min(Style.space(150), mainColumn.width * 0.42)
+                    label: "Sort"
+                    showLabel: false
+                    options: [
+                      { value: "list", label: "Sort: List" },
+                      { value: "time", label: "Sort: Date" },
+                      { value: "priority", label: "Sort: Priority" },
+                      { value: "title", label: "Sort: Title" }
+                    ]
                     foreground: widget.foreground
                     fontFamily: widget.fontFamily
+                    onChanged: function (value) { tt.setSort(value) }
+                    onPopupOpenChanged: if (!popupOpen) widget.reclaimKeys()
                   }
 
-                  // ---- a project row (Projects tab, nothing picked yet)
-                  CursorSurface {
-                    visible: entry.isProject
-                    width: parent.width
-                    implicitHeight: Style.spacing.popupRowHeight
-                    hasCursor: entry.onCursor
-                    foreground: widget.foreground
+                  // A Dropdown assigns `value` on selection, which would strand the control
+                  // whenever the `o` shortcut changes the sort behind it; the Binding keeps
+                  // it following the service either way.
+                  Binding {
+                    target: sortPicker
+                    property: "value"
+                    value: tt.sort
+                  }
 
-                    MouseArea {
-                      anchors.fill: parent
-                      hoverEnabled: true
-                      cursorShape: Qt.PointingHandCursor
-                      onContainsMouseChanged: if (containsMouse) widget.setCursor(entry.index, false)
-                      onClicked: {
-                        tt.setProjectFilter(entry.rowId)
+                  Button {
+                    // A task filter has nothing to say about habits, so the funnel
+                    // stays out of the way there rather than filtering a list it cannot match.
+                    visible: !widget.showingHabits && !widget.showingStats
+                    text: "Filter"
+                    bordered: true
+                    selected: widget.filtering
+                    foreground: widget.dim
+                    fontFamily: widget.fontFamily
+                    fontSize: Style.font.caption
+                    verticalPadding: Style.spacing.xs
+                    tooltipText: "Priority and tag filters"
+                    onClicked: widget.toggleFilters()
+                  }
+                }
+              }
+
+              PanelSeparator {
+                id: paneRule
+                foreground: widget.foreground
+              }
+
+              Flow {
+                id: filterBar
+                visible: tt.authed && widget.filtering && !widget.showingHabits
+                         && !widget.showingStats
+                width: parent.width
+                spacing: Style.spacing.md
+
+                Text {
+                  text: "Filter"
+                  color: widget.dim
+                  font.family: widget.fontFamily
+                  font.pixelSize: Style.font.caption
+                }
+
+                Dropdown {
+                  id: priorityPicker
+                  width: Style.space(150)
+                  label: "Priority"
+                  showLabel: false
+                  options: [
+                    { value: "-1", label: "Any priority" },
+                    { value: "5", label: "High priority" },
+                    { value: "3", label: "Medium priority" },
+                    { value: "1", label: "Low priority" },
+                    { value: "0", label: "No priority" }
+                  ]
+                  foreground: widget.foreground
+                  fontFamily: widget.fontFamily
+                  onChanged: function (value) { tt.setPriorityFilter(Model.toInt(value)) }
+                  onPopupOpenChanged: if (!popupOpen) widget.reclaimKeys()
+                }
+
+                Binding {
+                  target: priorityPicker
+                  property: "value"
+                  value: String(tt.priorityFilter)
+                }
+
+                Dropdown {
+                  id: tagPicker
+                  width: Math.min(filterBar.width, Style.space(150))
+                  label: "Tag"
+                  showLabel: false
+                  options: widget.tagOptions
+                  foreground: widget.foreground
+                  fontFamily: widget.fontFamily
+                  onChanged: function (value) { tt.setTagFilter(value) }
+                  onPopupOpenChanged: if (!popupOpen) widget.reclaimKeys()
+                }
+
+                Binding {
+                  target: tagPicker
+                  property: "value"
+                  value: tt.tagFilter
+                }
+              }
+
+              Flickable {
+                id: listFlick
+                visible: tt.authed && widget.rowCount > 0
+                width: parent.width
+                // Reserve the chrome first so expanded tasks stay inside the card.
+                height: visible ? Math.max(0, mainColumn.height - paneHeader.implicitHeight
+                  - paneRule.height - quickAddBar.implicitHeight
+                  - (filterBar.visible ? filterBar.implicitHeight + mainColumn.spacing : 0)
+                  - (statusLine.visible ? statusLine.implicitHeight + mainColumn.spacing : 0)
+                  - mainColumn.spacing * 3) : 0
+                contentWidth: width
+                contentHeight: listColumn.implicitHeight
+                clip: true
+                boundsBehavior: Flickable.StopAtBounds
+                flickableDirection: Flickable.VerticalFlick
+                interactive: contentHeight > height
+                ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+
+                Column {
+                  id: listColumn
+                  width: listFlick.width
+                  spacing: Style.spacing.xs
+
+                  Repeater {
+                    model: widget.rows
+
+                    delegate: Column {
+                      id: entry
+                      required property int index
+                      required property var modelData
+
+                      readonly property string rowId: String(modelData && modelData.id ? modelData.id : "")
+                      readonly property bool onCursor: widget.cursorActive && widget.cursorIndex === entry.index
+
+                      width: listColumn.width
+                      spacing: Style.spacing.xs
+
+                      PanelSectionHeader {
+                        visible: text !== ""
+                        width: parent.width
+                        topPadding: (entry.index > 0 ? Style.spacing.lg : Style.spacing.xs)
+                          + Math.ceil(fontSize * 0.15)
+                        leftPadding: Style.spacing.rowPaddingX
+                        elide: Text.ElideRight
+                        text: widget.sectionFor(entry.index)
+                        foreground: widget.foreground
+                        fontFamily: widget.fontFamily
                       }
-                    }
 
-                    Text {
-                      anchors.left: parent.left
-                      anchors.leftMargin: Style.spacing.rowPaddingX
-                      anchors.right: projectCount.left
-                      anchors.rightMargin: Style.spacing.md
-                      anchors.verticalCenter: parent.verticalCenter
-                      text: Model.squish(entry.modelData ? entry.modelData.name : "") || "Untitled"
-                      // Account data, not markup: Text sniffs for HTML by default.
-                      textFormat: Text.PlainText
-                      color: widget.foreground
-                      font.family: widget.fontFamily
-                      font.pixelSize: Style.font.body
-                      elide: Text.ElideRight
-                    }
-
-                    Text {
-                      id: projectCount
-                      anchors.right: parent.right
-                      anchors.rightMargin: Style.spacing.rowPaddingX
-                      anchors.verticalCenter: parent.verticalCenter
-                      text: String(Model.toInt(entry.modelData ? entry.modelData.count : 0))
-                      color: widget.dim
-                      font.family: widget.fontFamily
-                      font.pixelSize: Style.font.caption
-                    }
-                  }
-
-                  // ---- a habit row
-                  HabitRow {
-                    visible: widget.showingHabits
-                    width: parent.width
-                    habit: entry.modelData
-                    hasCursor: entry.onCursor
-                    foreground: widget.foreground
-                    fontFamily: widget.fontFamily
-                    onHovered: function (isHovered) { if (isHovered) widget.setCursor(entry.index, false) }
-                    onCheckinRequested: tt.checkInHabit(entry.modelData)
-                  }
-
-                  // ---- a task row
-                  TaskRow {
-                    id: taskRow
-                    visible: !entry.isProject && !widget.showingHabits
-                    width: parent.width
-                    task: entry.modelData
-                    expanded: widget.expandedId === entry.rowId
-                    showProjectChip: widget.chipsUseful
-                    hasCursor: entry.onCursor
-                    foreground: widget.foreground
-                    fontFamily: widget.fontFamily
-                    urgent: widget.urgent
-                    onHovered: function (isHovered) { if (isHovered) widget.setCursor(entry.index, false) }
-                    onCompleteRequested: widget.completeAt(entry.modelData)
-                    onDeleteRequested: widget.requestDelete(entry.modelData)
-                    onExpandRequested: { widget.setCursor(entry.index); widget.toggleExpanded(entry.rowId) }
-                    onPriorityCycleRequested: widget.cyclePriority(entry.modelData)
-                  }
-
-                  // Built only while it is open. The pane is a whole task editor —
-                  // four fields and three dropdowns — and exactly one row can be
-                  // expanded at a time, so instantiating one per row would build
-                  // hundreds of controls nobody is looking at.
-                  Loader {
-                    id: detailLoader
-                    width: parent.width
-                    active: !entry.isProject && widget.expandedId === entry.rowId
-                    visible: active  // a Column lays out zero-height children otherwise
-
-                    sourceComponent: TaskDetail {
-                      width: detailLoader.width
-                      task: entry.modelData
-                      projects: tt.projects
-                      expanded: true
-                      foreground: widget.foreground
-                      fontFamily: widget.fontFamily
-                      onItemToggled: function (itemId, done) { tt.toggleItem(entry.modelData, itemId, done) }
-                      onItemAdded: function (title) { tt.addItem(entry.modelData, title) }
-                      onItemRemoved: function (itemId) { tt.removeItem(entry.modelData, itemId) }
-                      onMoveRequested: function (projectId) { tt.moveToProject(entry.modelData, projectId) }
-                      onDueRequested: function (when) { tt.setDue(entry.modelData, when) }
-                      onStartRequested: function (when) { tt.setStart(entry.modelData, when) }
-                      onTagsRequested: function (tags) { tt.setTags(entry.modelData, tags) }
-                      onRepeatRequested: function (rule) { tt.setRepeat(entry.modelData, rule) }
-                      onReminderRequested: function (spec) { tt.setReminder(entry.modelData, spec) }
-                      // An open dropdown or a focused field owns j/k/Enter; tell the key
-                      // catcher to stand down for as long as that is true.
-                      onEditingChanged: {
-                        widget.detailPickerOpen = editing
-                        if (!editing) widget.reclaimKeys()
+                      // ---- a habit row
+                      HabitRow {
+                        visible: widget.showingHabits
+                        width: parent.width
+                        habit: entry.modelData
+                        hasCursor: entry.onCursor
+                        foreground: widget.foreground
+                        fontFamily: widget.fontFamily
+                        onHovered: function (isHovered) { if (isHovered) widget.setCursor(entry.index, false) }
+                        onCheckinRequested: tt.checkInHabit(entry.modelData)
                       }
-                      // Committing a change writes through Service *before* the control
-                      // finishes closing, and that write replaces `tasks`, which rebuilds
-                      // every delegate — so this handler is destroyed before it can report
-                      // the close, and the catcher would stay deaf forever. The destructor
-                      // still runs in a live context, so it is the falling edge.
-                      Component.onDestruction: {
-                        if (editing) {
-                          widget.detailPickerOpen = false
-                          widget.reclaimKeys()
+
+                      // ---- a task row
+                      TaskRow {
+                        id: taskRow
+                        visible: !widget.showingHabits
+                        width: parent.width
+                        task: entry.modelData
+                        expanded: widget.expandedId === entry.rowId
+                        showProjectChip: widget.chipsUseful
+                        showFocusAction: tt.showFocus
+                        focusAvailable: !tt.focusActive && !tt.focusBusy
+                        hasCursor: entry.onCursor
+                        foreground: widget.foreground
+                        fontFamily: widget.fontFamily
+                        urgent: widget.urgent
+                        onHovered: function (isHovered) { if (isHovered) widget.setCursor(entry.index, false) }
+                        onFocusRequested: tt.startFocus(entry.modelData)
+                        onCompleteRequested: widget.completeAt(entry.modelData)
+                        onDeleteRequested: widget.requestDelete(entry.modelData)
+                        onExpandRequested: { widget.setCursor(entry.index); widget.toggleExpanded(entry.rowId) }
+                        onPriorityCycleRequested: widget.cyclePriority(entry.modelData)
+                      }
+
+                      // Built only while it is open. The pane is a whole task editor —
+                      // four fields and three dropdowns — and exactly one row can be
+                      // expanded at a time, so instantiating one per row would build
+                      // hundreds of controls nobody is looking at.
+                      Loader {
+                        id: detailLoader
+                        width: parent.width
+                        active: !widget.showingHabits && widget.expandedId === entry.rowId
+                        visible: active  // a Column lays out zero-height children otherwise
+
+                        sourceComponent: TaskDetail {
+                          width: detailLoader.width
+                          task: entry.modelData
+                          projects: tt.projects
+                          expanded: true
+                          foreground: widget.foreground
+                          fontFamily: widget.fontFamily
+                          onItemToggled: function (itemId, done) { tt.toggleItem(entry.modelData, itemId, done) }
+                          onItemAdded: function (title) { tt.addItem(entry.modelData, title) }
+                          onItemRemoved: function (itemId) { tt.removeItem(entry.modelData, itemId) }
+                          onMoveRequested: function (projectId) { tt.moveToProject(entry.modelData, projectId) }
+                          onDueRequested: function (when) { tt.setDue(entry.modelData, when) }
+                          onStartRequested: function (when) { tt.setStart(entry.modelData, when) }
+                          onTagsRequested: function (tags) { tt.setTags(entry.modelData, tags) }
+                          onRepeatRequested: function (rule) { tt.setRepeat(entry.modelData, rule) }
+                          onReminderRequested: function (spec) { tt.setReminder(entry.modelData, spec) }
+                          // An open dropdown or a focused field owns j/k/Enter; tell the key
+                          // catcher to stand down for as long as that is true.
+                          onEditingChanged: {
+                            widget.detailPickerOpen = editing
+                            if (!editing) widget.reclaimKeys()
+                          }
+                          // Committing a change writes through Service *before* the control
+                          // finishes closing, and that write replaces `tasks`, which rebuilds
+                          // every delegate — so this handler is destroyed before it can report
+                          // the close, and the catcher would stay deaf forever. The destructor
+                          // still runs in a live context, so it is the falling edge.
+                          Component.onDestruction: {
+                            if (editing) {
+                              widget.detailPickerOpen = false
+                              widget.reclaimKeys()
+                            }
+                          }
                         }
                       }
                     }
                   }
                 }
               }
+
+              // ---- the statistics dashboard
+              //
+              // Its own pane rather than a row list: a statistic is not something to act
+              // on, so it gets no cursor, no checkbox and no detail pane. The numbers are
+              // Service.stats, fetched on entering the view.
+              Flickable {
+                id: statsFlick
+                visible: tt.authed && widget.showingStats
+                width: parent.width
+                height: visible ? Math.max(0, mainColumn.height - paneHeader.implicitHeight
+                  - paneRule.height
+                  - (statusLine.visible ? statusLine.implicitHeight + mainColumn.spacing : 0)
+                  - mainColumn.spacing * 3) : 0
+                contentWidth: width
+                contentHeight: statsPane.implicitHeight
+                clip: true
+                boundsBehavior: Flickable.StopAtBounds
+                flickableDirection: Flickable.VerticalFlick
+                interactive: contentHeight > height
+                ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+
+                StatsPane {
+                  id: statsPane
+                  width: statsFlick.width
+                  stats: tt.stats
+                  foreground: widget.foreground
+                  fontFamily: widget.fontFamily
+                }
+              }
+
+              Text {
+                id: emptyState
+                visible: tt.authed && tt.loaded && widget.rowCount === 0 && !widget.showingStats
+                width: parent.width
+                text: widget.showingHabits ? "No habits set up. Add one in Dida365."
+                    : tt.search !== "" ? "Nothing matches “" + Model.elide(tt.search, 30) + "”"
+                    : (tt.priorityFilter >= 0 || tt.tagFilter !== "") ? "Nothing matches that filter"
+                    : tt.view === "completed" ? "Nothing finished recently"
+                    : "Nothing due. Enjoy it."
+                color: widget.dim
+                font.family: widget.fontFamily
+                font.pixelSize: Style.font.body
+                horizontalAlignment: Text.AlignHCenter
+                wrapMode: Text.WordWrap
+                topPadding: Style.spacing.lg
+                bottomPadding: Style.spacing.lg
+              }
+
+              Text {
+                id: statusLine
+                visible: tt.authed && (tt.actionStatus !== "" || tt.errorText !== "")
+                width: parent.width
+                text: tt.actionStatus !== "" ? tt.actionStatus : tt.errorText
+                color: tt.actionStatus !== "" ? widget.dim : widget.urgent
+                font.family: widget.fontFamily
+                font.pixelSize: Style.font.bodySmall
+                wrapMode: Text.WordWrap
+              }
+
+              // ---- quick add, along the bottom of the list the way the app has it
+              Item {
+                id: quickAddBar
+                // There is nothing to add to a dashboard, so the prompt goes with the
+                // list verbs: out of the way until you are back on a task view.
+                visible: !widget.showingStats
+                width: parent.width
+                implicitHeight: widget.adding ? quickAdd.implicitHeight : addPrompt.implicitHeight
+                height: visible ? implicitHeight : 0
+
+                Button {
+                  id: addPrompt
+                  visible: !widget.adding
+                  leftAlign: true
+                  width: parent.width
+                  text: "＋  Add a task…"
+                  bordered: false
+                  foreground: widget.dim
+                  fontFamily: widget.fontFamily
+                  fontSize: Style.font.body
+                  onClicked: widget.openAdd()
+                }
+
+                QuickAdd {
+                  id: quickAdd
+                  visible: widget.adding
+                  anchors.top: parent.top
+                  width: parent.width
+                  service: tt
+                  foreground: widget.foreground
+                  fontFamily: widget.fontFamily
+                  onSubmitted: function (text) {
+                    tt.add(text)
+                    widget.closeAdd()
+                  }
+                  onDismissed: widget.closeAdd()
+                }
+              }
+            }
+          }
+        }
+
+        // ================================================== signed out
+        Column {
+          id: signIn
+          visible: !tt.authed
+          anchors.fill: parent
+          spacing: Style.spacing.rowGap
+
+          PanelHero {
+            width: parent.width
+            title: "Dida 365"
+            meta: widget.summary
+            foreground: widget.foreground
+            fontFamily: widget.fontFamily
+            iconComponent: Component {
+              Text {
+                text: "󰄲"
+                color: widget.foreground
+                font.family: widget.fontFamily
+                font.pixelSize: Style.font.display
+              }
+            }
+          }
+
+          Item { width: 1; height: Style.spacing.sm }
+
+          Text {
+            width: parent.width
+            text: "Connect your TickTick account to see your tasks here."
+            color: widget.dim
+            font.family: widget.fontFamily
+            font.pixelSize: Style.font.bodySmall
+            wrapMode: Text.WordWrap
+          }
+
+          // The browser flow leads: it is the one people expect from a "sign in"
+          // button, and it needs nothing pasted. It opens a terminal of its own
+          // because it is interactive — it may ask for a client id the first time,
+          // and it waits on a redirect back to localhost.
+          Button {
+            width: parent.width
+            text: "Sign in with browser"
+            bordered: true
+            foreground: widget.foreground
+            fontFamily: widget.fontFamily
+            onClicked: tt.signIn()
+          }
+
+          Text {
+            visible: tt.authMessage !== ""
+            width: parent.width
+            text: tt.authMessage
+            color: widget.urgent
+            font.family: widget.fontFamily
+            font.pixelSize: Style.font.bodySmall
+            wrapMode: Text.WordWrap
+          }
+
+          // The fallback, and the faster path for anyone who already has a token:
+          // folded away until asked for, so the panel leads with one button.
+          Button {
+            visible: !widget.pastingToken
+            width: parent.width
+            text: "Paste an API token instead"
+            bordered: false
+            foreground: widget.dim
+            fontFamily: widget.fontFamily
+            fontSize: Style.font.bodySmall
+            onClicked: {
+              widget.pastingToken = true
+              Qt.callLater(function () { tokenField.forceActiveFocus() })
             }
           }
 
           Text {
-            visible: tt.authed
+            visible: widget.pastingToken
             width: parent.width
-            text: "↑↓ move · ⏎ done · space detail · ←→ view · a add · / find · "
-                  + "f filter · o sort · s sync · x delete"
-            color: Qt.darker(widget.foreground, 1.8)
+            text: "In the TickTick web app: avatar → Settings → Account → API Token."
+            color: widget.dim
             font.family: widget.fontFamily
             font.pixelSize: Style.font.caption
-            horizontalAlignment: Text.AlignHCenter
-            // Wraps rather than elides: ten shortcuts do not fit across the popup on
-            // one line, and eliding hid every one after "f filter" behind an ellipsis —
-            // a legend nobody can read is worse than one that costs a second line.
             wrapMode: Text.WordWrap
+          }
+
+          TextField {
+            id: tokenField
+            visible: widget.pastingToken
+            width: parent.width
+            enabled: !tt.authBusy
+            password: true
+            placeholderText: tt.authBusy ? "Checking…" : "API token"
+            foreground: widget.foreground
+            font.family: widget.fontFamily
+            onAccepted: {
+              tt.signInWithToken(text)
+              text = ""
+            }
+          }
+
+          Button {
+            visible: widget.pastingToken
+            width: parent.width
+            text: tt.authBusy ? "Connecting…" : "Connect"
+            bordered: true
+            foreground: widget.foreground
+            fontFamily: widget.fontFamily
+            onClicked: {
+              tt.signInWithToken(tokenField.text)
+              tokenField.text = ""
+            }
           }
         }
       }

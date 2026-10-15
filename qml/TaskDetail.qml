@@ -168,7 +168,7 @@ Item {
       color: root.dim
       font.family: root.fontFamily
       font.pixelSize: Style.font.bodySmall
-      wrapMode: Text.WordWrap
+      wrapMode: Text.Wrap
       maximumLineCount: 6
       elide: Text.ElideRight
     }
@@ -218,8 +218,8 @@ Item {
           // should not be a target the mouse can find by accident either.
           Text {
             id: itemRemove
-            visible: itemRow.hovering && itemRow.itemId !== ""
-            width: visible ? implicitWidth : 0
+            opacity: itemRow.hovering && itemRow.itemId !== "" ? 1 : 0
+            width: Style.space(20)
             anchors.right: parent.right
             anchors.verticalCenter: parent.verticalCenter
             text: "󰅙"
@@ -231,6 +231,7 @@ Item {
               anchors.fill: parent
               anchors.margins: -Style.spacing.xs
               hoverEnabled: true
+              enabled: itemRow.itemId !== ""
               cursorShape: Qt.PointingHandCursor
               onContainsMouseChanged: if (containsMouse) itemRow.hovering = true
               onClicked: root.itemRemoved(itemRow.itemId)
@@ -289,13 +290,14 @@ Item {
     // understands "tomorrow 5pm" and "next friday", and a date picker that could
     // not accept those would be a step backwards from typing.
 
-    Row {
+    Grid {
       width: parent.width
+      columns: width >= Style.space(300) ? 2 : 1
       spacing: Style.spacing.controlGap
 
       TextField {
         id: dueField
-        width: (parent.width - Style.spacing.controlGap) / 2
+        width: (parent.width - (parent.columns - 1) * parent.spacing) / parent.columns
         placeholderText: "Due — “tomorrow 5pm”"
         text: root.dueSeed
         foreground: root.foreground
@@ -309,7 +311,7 @@ Item {
 
       TextField {
         id: startField
-        width: (parent.width - Style.spacing.controlGap) / 2
+        width: (parent.width - (parent.columns - 1) * parent.spacing) / parent.columns
         placeholderText: "Starts…"
         text: root.startSeed
         foreground: root.foreground
@@ -332,13 +334,14 @@ Item {
       Keys.onEscapePressed: { text = root.tagSeed; focus = false }
     }
 
-    Row {
+    Grid {
       width: parent.width
+      columns: width >= Style.space(300) ? 2 : 1
       spacing: Style.spacing.controlGap
 
       Dropdown {
         id: repeatPicker
-        width: (parent.width - Style.spacing.controlGap) / 2
+        width: (parent.width - (parent.columns - 1) * parent.spacing) / parent.columns
         label: "Repeat"
         showLabel: false
         options: root.repeatOptions
@@ -349,7 +352,7 @@ Item {
 
       Dropdown {
         id: remindPicker
-        width: (parent.width - Style.spacing.controlGap) / 2
+        width: (parent.width - (parent.columns - 1) * parent.spacing) / parent.columns
         label: "Remind"
         showLabel: false
         options: root.reminderOptions

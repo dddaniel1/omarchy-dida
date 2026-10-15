@@ -22,11 +22,15 @@ Item {
   property var habits: []
   property var habitCounts: ({})
   property var habitStamp: 0
+  // Statistics: a third read with its own clock. A dashboard over finished work, habits
+  // and focus, fetched only while the Stats view is open rather than on every poll.
+  property var stats: ({})
   // The focus timer. `focusEndsAt` is an absolute deadline in epoch ms, which is what
   // lets the countdown survive a reload and stay identical on every monitor: each
   // surface ticks locally against the same instant the CLI wrote down.
-  // `focusState`, not `focus`: `Item.focus` is FINAL on a QObject, and
-  // overriding a FINAL property fails the whole widget at load time rather than warning.
+  //
+  // Named `focusState`, not `focus`: `Item.focus` is a FINAL property, and overriding
+  // it is a load-time failure of the whole widget rather than a warning.
   property var focusState: ({})
   property var focusTally: ({})
   property real focusEndsAt: 0
@@ -62,6 +66,9 @@ Item {
 
   readonly property bool showHabits: boolSetting("showHabits", true)
   readonly property bool showFocus: boolSetting("showFocus", true)
+  // The Stats view is read on demand, so this only decides whether the sidebar and the
+  // number keys offer it at all.
+  readonly property bool showStats: boolSetting("showStats", true)
   // 0 means "use the helper's default", not "a zero-length block" — the helper clamps
   // the same way, so both sides agree on what an unset duration means.
   readonly property int focusMinutes: intSetting("focusMinutes", 0, 0, 480)
@@ -158,6 +165,7 @@ Item {
     if (value === "overdue") return "overdue"
     if (value === "completed" || value === "done") return "completed"
     if (value === "habits" || value === "habit") return "habits"
+    if (value === "stats" || value === "statistics") return "stats"
     if (value === "all") return "all"
     return "today"
   }
@@ -195,9 +203,9 @@ Item {
       if (projectFilter !== "") done = done.concat(["--project", projectFilter])
       return done
     }
-    // views.collect rejects a project view with no id; fall back rather than
-    // trading the whole list for a usage error.
-    var effective = view === "project" && projectFilter === "" ? "all" : view
+    // Keep the task cache current behind habits and the unscoped list picker.
+    var effective = view === "habits" || view === "stats"
+      || (view === "project" && projectFilter === "") ? "all" : view
     var args = ["tasks", "--view", effective, "--days", String(upcomingDays),
                 "--sort", sort]
     if (effective === "project") args = args.concat(["--project", projectFilter])
@@ -646,6 +654,20 @@ Item {
     return { total: total, due: due, done: done, remaining: Math.max(0, due - done), streakBest: best }
   }
 
+  // Stats, read on entering the Stats view. Their own process, on their own clock: a
+  // stats read is a completed-task window plus the cached task, habit and focus reads,
+  // and it must never delay a poll or a click. The window matches the Done view's.
+  function loadStats() {
+    if (statsProcess.running || !showStats) return
+    statsProcess.command = ["python3", helperPath, "stats", "--days", String(completedDays)]
+    statsProcess.running = true
+  }
+
+  function applyStats(payload) {
+    var body = root.bodyOf(payload)
+    if (Util.isPlainObject(body)) root.stats = body
+  }
+
   // Tick a habit off now, and let the helper have the last word. The day's state is
   // the helper's to decide — a quantified habit steps rather than completes — so this
   // only guesses at the finished case, and the refresh after the queue drains replaces
@@ -673,9 +695,13 @@ Item {
 
   // --- focus ------------------------------------------------------------
 
-  function loadFocus() {
+  function loadFocus(maxAge) {
     if (focusProcess.running) return
-    focusProcess.command = ["python3", helperPath, "focus"]
+    var args = ["focus"]
+    // A poll that only needs the clock can say "do not go to the network for the
+    // tally"; a real read leaves it to the helper's own default.
+    if (Number(maxAge) > 0) args = args.concat(["--max-age", String(maxAge)])
+    focusProcess.command = ["python3", helperPath].concat(args)
     focusProcess.running = true
   }
 
@@ -693,7 +719,7 @@ Item {
   // The durations travel as flags because widget settings are not visible to a CLI
   // process. They are only meaningful on `start`, which is where the helper writes
   // them into the block; every later transition reads them back from the file.
-  function focusAction(name) {
+  function focusAction(name, task) {
     if (focusProcess.running) return
     var args = ["focus", name]
     if (name === "start") {
@@ -703,12 +729,21 @@ Item {
         "--long-break", String(longBreakMinutes),
         "--long-interval", String(longBreakInterval)
       ])
+      if (task) args = args.concat(["--task-id", String(task.id),
+        "--task-title", Model.squish(task.title) || "Untitled task"])
     }
     focusProcess.command = ["python3", helperPath].concat(args)
     focusProcess.running = true
   }
 
-  function startFocus() { focusAction("start") }
+  readonly property bool focusBusy: focusProcess.running
+
+  function startFocus(task) {
+    if (focusActive) return
+    if (task && (!task.id || String(task.id).indexOf("local-draft-") === 0
+        || Model.isNote(task) || Model.isDone(task))) return
+    focusAction("start", task)
+  }
   function pauseFocus() { focusAction("pause") }
   function resumeFocus() { focusAction("resume") }
   function stopFocus() { focusAction("stop") }
@@ -908,6 +943,20 @@ Item {
     // The timer is read at startup so a block started before the last shell restart
     // is still counting down in the bar — the whole reason its state is a file.
     root.loadFocus()
+    // And so is the habit count: it is on the bar badge from the first frame, so it
+    // cannot wait for someone to open the Habits view or for the slow poll to come round.
+    root.loadHabits()
+  }
+
+  Timer {
+    // The timer state, re-read often enough that a block started from a terminal — or
+    // from another surface — shows up in this bar within half a minute. `--max-age`
+    // keeps it off the network: only the clock is being watched here, and the tally it
+    // returns is served from cache until it is genuinely stale.
+    interval: 30000
+    repeat: true
+    running: root.showFocus
+    onTriggered: root.loadFocus(300)
   }
 
   Timer {
@@ -1093,6 +1142,21 @@ Item {
     onExited: function () {
       var payload = root.payloadOf(String(habitsOut.text || ""))
       if (payload && payload.ok === true) root.applyHabits(payload)
+      else if (payload && payload.message) root.errorText = String(payload.message)
+    }
+  }
+
+  Process {
+    // Stats: a dashboard on its own slot, fetched only while its view is open. Its own
+    // process for the same reason habits have one — a stats read is several endpoints
+    // and must never sit in front of a task poll.
+    id: statsProcess
+    running: false
+    command: []
+    stdout: StdioCollector { id: statsOut; waitForEnd: true }
+    onExited: function () {
+      var payload = root.payloadOf(String(statsOut.text || ""))
+      if (payload && payload.ok === true) root.applyStats(payload)
       else if (payload && payload.message) root.errorText = String(payload.message)
     }
   }

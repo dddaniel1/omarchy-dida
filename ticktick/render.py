@@ -77,6 +77,8 @@ def _render(command: str, payload: dict, s: Style, width: int) -> str:
         return _tags(payload, s)
     if command == "habits":
         return _habits(payload, s, width)
+    if command == "stats":
+        return _stats(payload, s, width)
     if command == "checkin":
         return _checkin(payload, s)
     if command == "focus":
@@ -306,6 +308,78 @@ def _habits(payload: dict, s: Style, width: int) -> str:
     if best:
         footer += f"  best streak {best}d"
     lines.append(s(DIM, "  " + footer))
+    return "\n".join(lines)
+
+
+def _stats(payload: dict, s: Style, width: int) -> str:
+    """A dashboard in text: the headline numbers, then the breakdowns beneath them.
+
+    `width` is accepted to match the other renderers, which use it to place columns;
+    this one is a fixed stack of short lines and does not need it.
+    """
+    summary = payload.get("summary") or {}
+    dist = payload.get("distribution") or {}
+    days = int(_to_number(payload.get("days")))
+    lines: list[str] = []
+
+    head = f"  {int(_to_number(summary.get('open')))} open"
+    overdue = int(_to_number(summary.get("overdue")))
+    if overdue:
+        head += s(YELLOW, f" · {overdue} overdue")
+    today = int(_to_number(summary.get("today")))
+    if today:
+        head += f" · {today} today"
+    lines.append(head)
+
+    tail = f"  {int(_to_number(summary.get('completed')))} completed in {days}d"
+    blocks = int(_to_number(summary.get("focusBlocks")))
+    minutes = int(_to_number(summary.get("focusMinutes")))
+    if blocks or minutes:
+        tail += f" · {blocks} focus block{'' if blocks == 1 else 's'} · {minutes}m"
+    lines.append(tail)
+
+    due = int(_to_number(summary.get("habitDue")))
+    best = int(_to_number(summary.get("streakBest")))
+    if due or best:
+        habits = f"  habits {int(_to_number(summary.get('habitDone')))}/{due} done"
+        if best:
+            habits += f" · best streak {best}d"
+        lines.append(habits)
+
+    trend = payload.get("trend") or []
+    if trend:
+        lines.append(s(DIM, "  completed per day"))
+        for day in trend:
+            count = int(_to_number(day.get("count")))
+            label = _safe(day.get("weekday"))
+            if count:
+                lines.append(f"    {label} {s(GREEN, '▇' * count)} {count}")
+            else:
+                lines.append(s(DIM, f"    {label} ·"))
+
+    for title, entries, key in (
+        ("by list", dist.get("byList") or [], "name"),
+        ("by tag", dist.get("byTag") or [], "tag"),
+    ):
+        if not entries:
+            continue
+        lines.append(s(DIM, f"  {title}"))
+        for entry in entries[:8]:
+            name = _safe(entry.get(key)) or ("No list" if key == "name" else "?")
+            count = int(_to_number(entry.get("count")))
+            lines.append(f"    {name}  {s(DIM, str(count))}")
+
+    priorities = [
+        entry for entry in (dist.get("byPriority") or [])
+        if int(_to_number(entry.get("count")))
+    ]
+    if priorities:
+        lines.append(s(DIM, "  by priority"))
+        lines.append("    " + "   ".join(
+            f"{_safe(entry.get('label'))} {int(_to_number(entry.get('count')))}"
+            for entry in priorities
+        ))
+
     return "\n".join(lines)
 
 

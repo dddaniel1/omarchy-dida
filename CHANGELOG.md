@@ -18,8 +18,22 @@ TickTick's own rules, in the bar.
   records nothing.
 - **`ticktick habits`**, **`ticktick checkin`**, and **`ticktick focus`**
   (`status`/`start`/`pause`/`resume`/`stop`/`complete`/`log`), so both are scriptable.
+- **A Stats view** — a read-only dashboard: a completed-per-day trend over the **Done**
+  window, the open work grouped by list with a priority and tag breakdown, and the day's
+  habit tally and focus minutes. Fetched on demand and off the poll, and gated by the new
+  `showStats` setting. **`ticktick stats`** renders the same thing at a terminal.
+- **Two-pane layout with sidebar** — a navigation sidebar (`qml/Sidebar.qml`) holding
+  smart lists, user lists, and the focus timer alongside the task list.
+- **Task-linked focus timer** — start a focus timer directly attached to a specific task
+  via the ▶ button on its row; the task title is shown in the timer and retained across views.
 - Habit check-ins and focus blocks join the offline outbox: a click made in a tunnel
   survives the reboot and drains later.
+
+### Removed
+
+- **Vendored `sources/` trees** — removed `sources/siam-ticktick` and
+  `sources/sotoaugusto-ticktick` permanently from the repository; the plugin at the root
+  ships and upstream references are maintained via git remotes.
 
 ### Notes
 

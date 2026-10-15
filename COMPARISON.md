@@ -1,7 +1,7 @@
 # Comparison — the two upstream TickTick plugins
 
-Read from the vendored sources at the commits recorded in `WORKSPACE.md`. Line counts are
-`wc -l` over the imported trees.
+Recorded from the upstream trees while they were vendored; their commits are in
+`WORKSPACE.md`. Line counts were `wc -l` over the imported trees.
 
 **Status: this fork now builds on `siam-ticktick`** — it is the plugin at the repository
 root, retargeted at Dida365 (plugin id `dddaniel1.dida365`, display name *Dida 365*). The
@@ -28,9 +28,9 @@ what each upstream does and does not do.
 **siam-ticktick** splits into a real CLI and a thin QML front end:
 
 ```
-qml/BarWidget.qml, Service.qml, TaskDetail.qml, TaskRow.qml, QuickAdd.qml, Model.js
+qml/BarWidget.qml, Sidebar.qml, Service.qml, TaskDetail.qml, TaskRow.qml, HabitRow.qml, StatsPane.qml, QuickAdd.qml, Model.js
         │  one JSON object per call, over a Process
-bin/ticktick → ticktick/{cli,api,auth,store,views,nlp,dates,render,config,errors}.py
+bin/ticktick → ticktick/{cli,api,auth,store,views,nlp,dates,render,config,errors,focus,habits,stats}.py
 ```
 
 QML never speaks HTTP: even sign-in goes through the helper. All of the logic worth
@@ -95,8 +95,9 @@ against that:
 2. **Port the Raycast extension's API layer** — `raycast-dida` already wraps all 11
    public endpoints with correct date/timezone handling; `ticktick/api.py` is where that
    would land.
-3. **Keep both trees vendored** and cherry-pick per feature, pulling upstream with
-   `git subtree pull`.
+3. ~~**Keep both trees vendored** and cherry-pick per feature, pulling upstream with
+   `git subtree pull`~~ — **dropped**: the vendored trees were removed. Upstream stays
+   reachable through the `siam`/`soto` remotes for reference only.
 
 Navigation, the untested parts of the QML, and anything that needs a live Omarchy
 session are not settled here — this file records what the source says, not what the

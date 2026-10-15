@@ -27,12 +27,29 @@ which is worse than an empty one.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Protocol
 
 from . import config as _config
 from . import dates as _dates
-from .api import Client
 from .errors import UsageError
+
+
+class TaskSource(Protocol):
+    """The duck-typed task source the view layer works against.
+
+    :class:`ticktick.api.Client` talks to the API; :class:`ticktick.store.CachedSource`
+    answers out of the local cache, and the selftest's stub out of fixtures. All three
+    satisfy this structurally, so `collect` never learns whether it is online.
+    """
+
+    def projects(self) -> Any: ...
+
+    def all_undone(self) -> Any: ...
+
+    def project_data(self, pid: str) -> Any: ...
+
+    def inbox_data(self) -> Any: ...
+
 
 #: TickTick's smart lists, plus `project` for one list of the user's own.
 VIEWS = ("today", "tomorrow", "next", "overdue", "inbox", "all", "project")
@@ -78,7 +95,7 @@ _NO_PROJECT: dict[str, str] = {"id": "", "name": "", "color": "", "groupId": ""}
 
 
 def collect(
-    client: Client,
+    client: TaskSource,
     cfg: dict,
     *,
     view: str = "today",
@@ -317,7 +334,7 @@ def row(
     }
 
 
-def catalogue(client: Client, cfg: dict) -> list[dict]:
+def catalogue(client: TaskSource, cfg: dict) -> list[dict]:
     """Open projects, with the remembered Inbox in front of them.
 
     TickTick omits the Inbox from `/project` entirely, and closed projects are archive
@@ -348,7 +365,7 @@ def catalogue(client: Client, cfg: dict) -> list[dict]:
     return out
 
 
-def groups(client: Client) -> list[dict]:
+def groups(client: TaskSource) -> list[dict]:
     """The folders lists are filed under, as ``[{'id','name','sortOrder'}, …]``.
 
     Folders are decoration: they change how the list of lists reads, never which tasks
@@ -383,7 +400,7 @@ def groups(client: Client) -> list[dict]:
 # --- internals ---------------------------------------------------------------
 
 
-def _project_tasks(client: Client, cfg: dict, pid: str, meta: dict) -> list[dict]:
+def _project_tasks(client: TaskSource, cfg: dict, pid: str, meta: dict) -> list[dict]:
     """Undone tasks for one project, filling `meta` in place from what `/data` echoes.
 
     The Inbox has to go through `/project/inbox/data`: it is not reachable through
