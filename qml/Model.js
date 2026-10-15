@@ -373,6 +373,52 @@ function barLabel(taskCount, habitsLeft) {
   return parts.join("  ")
 }
 
+var LIST_PALETTE = [
+  "#4D88FF", "#61BD4F", "#FFB800", "#F18181",
+  "#C377E0", "#00C2E0", "#FF78CB", "#8C9BA5"
+]
+
+function listColor(color, index) {
+  var c = squish(color)
+  if (c.indexOf("#") === 0 && (c.length === 4 || c.length === 7 || c.length === 9)) return c
+  var idx = Math.abs(toInt(index)) % LIST_PALETTE.length
+  return LIST_PALETTE[idx]
+}
+
+function pieSlices(items, total) {
+  var list = asList(items)
+  var sum = toInt(total)
+  if (sum <= 0) {
+    sum = 0
+    for (var i = 0; i < list.length; i++) sum += Math.max(0, toInt(list[i].count))
+  }
+  if (sum <= 0) return []
+
+  var slices = []
+  var startAngle = -Math.PI / 2
+  for (var j = 0; j < list.length; j++) {
+    var item = list[j]
+    var count = Math.max(0, toInt(item.count))
+    if (count <= 0) continue
+    var ratio = count / sum
+    var sweepAngle = ratio * Math.PI * 2
+    var percent = Math.round(ratio * 100)
+    var label = squish(item.name || item.label || item.tag || "")
+    var color = squish(item.color) || listColor("", j)
+    slices.push({
+      label: label,
+      count: count,
+      percent: percent,
+      color: color,
+      startAngle: startAngle,
+      endAngle: startAngle + sweepAngle,
+      sweepAngle: sweepAngle
+    })
+    startAngle += sweepAngle
+  }
+  return slices
+}
+
 if (typeof module !== "undefined") {
   module.exports = {
     squish: squish,
@@ -405,6 +451,10 @@ if (typeof module !== "undefined") {
     focusPhaseLabel: focusPhaseLabel,
     focusTallyLabel: focusTallyLabel,
     focusPrefsLabel: focusPrefsLabel,
-    barLabel: barLabel
+    barLabel: barLabel,
+    LIST_PALETTE: LIST_PALETTE,
+    listColor: listColor,
+    pieSlices: pieSlices
   }
 }
+

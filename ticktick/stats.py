@@ -66,6 +66,7 @@ def collect(
     days = clamp_days(days)
     trend = completion_trend(completed_rows, now=now, days=days)
     distribution = distribution_of(open_rows)
+    heatmap = heatmap_data(completed_rows, now=now, weeks=5)
     return {
         "days": days,
         "generated": now.isoformat(),
@@ -74,6 +75,83 @@ def collect(
         "distribution": distribution,
         "habits": habit_summary(habits),
         "focus": focus_summary(focus),
+        "heatmap": heatmap,
+    }
+
+
+def heatmap_data(rows: list[dict], *, now: datetime, weeks: int = 5) -> dict:
+    """A calendar-aligned activity grid (weeks x 7 days) of completions.
+
+    Aligned to calendar weeks (Monday to Sunday) ending on the current week, so each
+    row is a calendar week and each column is a fixed weekday (Monday=0 to Sunday=6).
+    """
+    try:
+        weeks = max(1, min(12, int(weeks or 5)))
+    except (TypeError, ValueError):
+        weeks = 5
+
+    tz = now.tzinfo
+    counted: dict[_date, int] = {}
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        day = _day_of(row.get("completed"), tz)
+        if day is not None:
+            counted[day] = counted.get(day, 0) + 1
+
+    today = now.date()
+    end_sunday = today + timedelta(days=(6 - today.weekday()))
+    start_monday = end_sunday - timedelta(days=weeks * 7 - 1)
+
+    max_count = 0
+    total = 0
+    flat_days: list[dict] = []
+    weeks_list: list[list[dict]] = []
+
+    current_day = start_monday
+    for _ in range(weeks):
+        week_days: list[dict] = []
+        for _ in range(7):
+            count = counted.get(current_day, 0)
+            is_future = current_day > today
+            if is_future:
+                level = -1
+            elif count == 0:
+                level = 0
+            elif count == 1:
+                level = 1
+            elif count <= 3:
+                level = 2
+            else:
+                level = 3
+
+            if not is_future:
+                total += count
+                if count > max_count:
+                    max_count = count
+
+            day_obj = {
+                "date": current_day.isoformat(),
+                "day": current_day.day,
+                "month": current_day.month,
+                "weekday": current_day.weekday(),
+                "weekdayName": _WEEKDAYS[current_day.weekday()],
+                "count": count if not is_future else 0,
+                "level": level,
+                "isToday": current_day == today,
+                "isFuture": is_future,
+            }
+            week_days.append(day_obj)
+            flat_days.append(day_obj)
+            current_day += timedelta(days=1)
+        weeks_list.append(week_days)
+
+    return {
+        "weeks": weeks_list,
+        "days": flat_days,
+        "total": total,
+        "maxCount": max_count,
+        "weekCount": weeks,
     }
 
 
@@ -267,6 +345,7 @@ __all__ = [
     "collect",
     "completion_trend",
     "distribution_of",
+    "heatmap_data",
     "summary",
     "habit_summary",
     "focus_summary",

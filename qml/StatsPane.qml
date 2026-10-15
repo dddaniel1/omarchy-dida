@@ -25,6 +25,11 @@ Item {
   readonly property var lists: Model.asList(dist.byList)
   readonly property var tags: Model.asList(dist.byTag)
   readonly property var priorities: Model.asList(dist.byPriority)
+  readonly property var heatmap: root.stats ? (root.stats.heatmap || {}) : ({})
+  readonly property var heatmapWeeks: Model.asList(root.heatmap.weeks)
+  readonly property var listSlices: Model.pieSlices(root.lists, root.summary.open)
+  property string heatmapHoverText: ""
+
   // A payload with no `summary` is one that has not arrived; the zeros of an empty
   // account are indistinguishable from a failed read without this flag.
   readonly property bool loaded: root.stats !== undefined && root.stats.summary !== undefined
@@ -35,6 +40,15 @@ Item {
     var peak = 0
     for (var i = 0; i < items.length; i++) peak = Math.max(peak, Model.toInt(items[i][key]))
     return Math.max(1, peak)
+  }
+
+  function priorityCount(level) {
+    for (var i = 0; i < root.priorities.length; i++) {
+      if (Model.toInt(root.priorities[i].priority) === level) {
+        return Model.toInt(root.priorities[i].count)
+      }
+    }
+    return 0
   }
 
   // ---- small pieces ----------------------------------------------------
@@ -63,10 +77,10 @@ Item {
   // Bars share a baseline and a peak, so the tallest is always the same height.
   component TrendDay: Item {
     id: trendDay
-    required property var modelData
+    property var dayData: null
     property int peak: 1
 
-    readonly property int count: Model.toInt(modelData.count)
+    readonly property int count: dayData ? Model.toInt(dayData.count) : 0
 
     height: Style.space(104)
 
@@ -96,10 +110,51 @@ Item {
       id: weekdayText
       anchors.bottom: parent.bottom
       anchors.horizontalCenter: parent.horizontalCenter
-      text: String(modelData.weekday || "")
+      text: String(trendDay.dayData ? (trendDay.dayData.weekday || "") : "")
       color: root.dim
       font.family: root.fontFamily
       font.pixelSize: Style.font.caption
+    }
+  }
+
+  // A single day cell in the 5-week calendar activity heatmap
+  component HeatmapCell: Rectangle {
+    id: cellItem
+    property var dayData: null
+    readonly property int level: dayData ? Model.toInt(dayData.level) : 0
+    readonly property bool isToday: dayData ? Boolean(dayData.isToday) : false
+    readonly property bool isFuture: dayData ? Boolean(dayData.isFuture) : false
+    readonly property int count: dayData ? Model.toInt(dayData.count) : 0
+
+    width: Style.space(16)
+    height: Style.space(16)
+    radius: Style.cornerRadius
+
+    color: {
+      if (cellItem.isFuture) return "transparent"
+      if (cellItem.level <= 0) return root.track
+      if (cellItem.level === 1) return Qt.rgba(root.accent.r, root.accent.g, root.accent.b, 0.4)
+      if (cellItem.level === 2) return Qt.rgba(root.accent.r, root.accent.g, root.accent.b, 0.7)
+      return root.accent
+    }
+
+    border.width: cellItem.isToday ? 1 : (cellItem.isFuture ? 1 : 0)
+    border.color: cellItem.isToday ? root.foreground : (cellItem.isFuture ? root.track : "transparent")
+
+    MouseArea {
+      anchors.fill: parent
+      hoverEnabled: true
+      onEntered: {
+        if (!cellItem.dayData) return
+        if (cellItem.isFuture) {
+          root.heatmapHoverText = cellItem.dayData.date + " (future)"
+        } else {
+          root.heatmapHoverText = cellItem.dayData.date + ": " + cellItem.count + (cellItem.count === 1 ? " task" : " tasks") + " completed"
+        }
+      }
+      onExited: {
+        root.heatmapHoverText = ""
+      }
     }
   }
 
@@ -109,27 +164,45 @@ Item {
     property string label: ""
     property string value: ""
     property real ratio: 0
+    property color barColor: root.accent
+    property bool showDot: false
 
     width: parent ? parent.width : 0
-    implicitHeight: Math.max(labelText.implicitHeight, valueText.implicitHeight, track.height)
+    implicitHeight: Math.max(labelBox.implicitHeight, valueText.implicitHeight, track.height)
     height: implicitHeight
 
-    Text {
-      id: labelText
+    Row {
+      id: labelBox
       anchors.left: parent.left
       anchors.verticalCenter: parent.verticalCenter
       width: Math.min(Style.space(120), parent.width * 0.35)
-      text: barRow.label
-      textFormat: Text.PlainText
-      elide: Text.ElideRight
-      color: root.foreground
-      font.family: root.fontFamily
-      font.pixelSize: Style.font.bodySmall
+      spacing: Style.spacing.xs
+
+      Rectangle {
+        visible: barRow.showDot
+        anchors.verticalCenter: parent.verticalCenter
+        width: Style.space(8)
+        height: Style.space(8)
+        radius: Style.cornerRadius
+        color: barRow.barColor
+      }
+
+      Text {
+        id: labelText
+        anchors.verticalCenter: parent.verticalCenter
+        width: parent.width - (barRow.showDot ? (Style.space(8) + Style.spacing.xs) : 0)
+        text: barRow.label
+        textFormat: Text.PlainText
+        elide: Text.ElideRight
+        color: root.foreground
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.bodySmall
+      }
     }
 
     Rectangle {
       id: track
-      anchors.left: labelText.right
+      anchors.left: labelBox.right
       anchors.leftMargin: Style.spacing.sm
       anchors.right: valueText.left
       anchors.rightMargin: Style.spacing.sm
@@ -142,7 +215,7 @@ Item {
         width: parent.width * Math.max(0, Math.min(1, barRow.ratio))
         height: parent.height
         radius: parent.radius
-        color: root.accent
+        color: barRow.barColor
       }
     }
 
@@ -160,15 +233,17 @@ Item {
   component Chip: Rectangle {
     property string label: ""
     property string value: ""
+    property color chipColor: root.track
+    property color textColor: root.foreground
     radius: Style.cornerRadius
-    color: root.track
+    color: chipColor
     implicitWidth: chipText.implicitWidth + Style.spacing.md
     implicitHeight: chipText.implicitHeight + Style.spacing.xs
     Text {
       id: chipText
       anchors.centerIn: parent
       text: parent.label + (parent.value === "" ? "" : "  " + parent.value)
-      color: root.foreground
+      color: parent.textColor
       font.family: root.fontFamily
       font.pixelSize: Style.font.caption
     }
@@ -244,14 +319,14 @@ Item {
       }
     }
 
-    // ---- completion trend
+    // ---- completion trend (last 7 days)
     Column {
       visible: root.loaded && root.trend.length > 0
       width: parent.width
       spacing: Style.spacing.sm
 
       Text {
-        text: "Completed"
+        text: "Completed (last 7 days)"
         color: root.foreground
         font.family: root.fontFamily
         font.pixelSize: Style.font.subtitle
@@ -264,8 +339,150 @@ Item {
         Repeater {
           model: root.trend
           delegate: TrendDay {
+            dayData: modelData
             width: trendRow.width / Math.max(1, root.trend.length)
             peak: root.peakOf(root.trend, "count")
+          }
+        }
+      }
+    }
+
+    // ---- activity heatmap (5 calendar weeks grid)
+    Column {
+      visible: root.loaded && root.heatmapWeeks.length > 0
+      width: parent.width
+      spacing: Style.spacing.sm
+
+      Item {
+        width: parent.width
+        height: Math.max(titleText.implicitHeight, summaryCountText.implicitHeight)
+
+        Text {
+          id: titleText
+          anchors.left: parent.left
+          anchors.verticalCenter: parent.verticalCenter
+          text: "Activity heatmap"
+          color: root.foreground
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.subtitle
+          font.bold: true
+        }
+
+        Text {
+          id: summaryCountText
+          anchors.right: parent.right
+          anchors.verticalCenter: parent.verticalCenter
+          text: Model.toInt(root.heatmap.total) + " completions · " + Model.toInt(root.heatmap.weekCount || root.heatmapWeeks.length) + " weeks"
+          color: root.dim
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+        }
+      }
+
+      Row {
+        spacing: Style.spacing.sm
+
+        // Weekday labels column: Mon, Wed, Fri
+        Column {
+          spacing: Style.space(3)
+          Repeater {
+            model: ["Mon", "", "Wed", "", "Fri", "", ""]
+            delegate: Item {
+              required property var modelData
+              width: Style.space(26)
+              height: Style.space(16)
+              Text {
+                anchors.left: parent.left
+                anchors.verticalCenter: parent.verticalCenter
+                text: String(modelData)
+                color: root.dim
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+              }
+            }
+          }
+        }
+
+        // The weeks columns
+        Row {
+          spacing: Style.space(3)
+          Repeater {
+            model: root.heatmapWeeks
+            delegate: Column {
+              id: weekCol
+              property var weekData: modelData
+              spacing: Style.space(3)
+              Repeater {
+                model: Model.asList(weekCol.weekData)
+                delegate: HeatmapCell {
+                  dayData: modelData
+                }
+              }
+            }
+          }
+        }
+      }
+
+      // Heatmap footer: hover info on left, legend on right
+      Item {
+        width: parent.width
+        height: Math.max(hoverText.implicitHeight, legendRow.implicitHeight)
+
+        Text {
+          id: hoverText
+          anchors.left: parent.left
+          anchors.verticalCenter: parent.verticalCenter
+          text: root.heatmapHoverText || (Model.toInt(root.heatmap.maxCount) > 0 ? ("Peak: " + Model.toInt(root.heatmap.maxCount) + " / day") : "")
+          color: root.dim
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+        }
+
+        Row {
+          id: legendRow
+          anchors.right: parent.right
+          anchors.verticalCenter: parent.verticalCenter
+          spacing: Style.spacing.xxs
+
+          Text {
+            anchors.verticalCenter: parent.verticalCenter
+            text: "Less"
+            color: root.dim
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+          }
+
+          Rectangle {
+            width: Style.space(10)
+            height: Style.space(10)
+            radius: Style.cornerRadius
+            color: root.track
+          }
+          Rectangle {
+            width: Style.space(10)
+            height: Style.space(10)
+            radius: Style.cornerRadius
+            color: Qt.rgba(root.accent.r, root.accent.g, root.accent.b, 0.4)
+          }
+          Rectangle {
+            width: Style.space(10)
+            height: Style.space(10)
+            radius: Style.cornerRadius
+            color: Qt.rgba(root.accent.r, root.accent.g, root.accent.b, 0.7)
+          }
+          Rectangle {
+            width: Style.space(10)
+            height: Style.space(10)
+            radius: Style.cornerRadius
+            color: root.accent
+          }
+
+          Text {
+            anchors.verticalCenter: parent.verticalCenter
+            text: "More"
+            color: root.dim
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
           }
         }
       }
@@ -277,21 +494,65 @@ Item {
       width: parent.width
       spacing: Style.spacing.sm
 
-      Text {
-        text: "By list"
-        color: root.foreground
-        font.family: root.fontFamily
-        font.pixelSize: Style.font.subtitle
-        font.bold: true
+      Item {
+        width: parent.width
+        height: Math.max(listTitleText.implicitHeight, listSummaryText.implicitHeight)
+
+        Text {
+          id: listTitleText
+          anchors.left: parent.left
+          anchors.verticalCenter: parent.verticalCenter
+          text: "By list"
+          color: root.foreground
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.subtitle
+          font.bold: true
+        }
+
+        Text {
+          id: listSummaryText
+          anchors.right: parent.right
+          anchors.verticalCenter: parent.verticalCenter
+          text: Model.toInt(root.summary.open) + " open"
+          color: root.dim
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+        }
+      }
+
+      // Proportional segmented bar for open tasks across lists
+      Row {
+        id: distBar
+        visible: root.listSlices.length > 0
+        width: parent.width
+        height: Style.space(8)
+        spacing: Style.space(2)
+
+        Repeater {
+          model: root.listSlices
+          delegate: Rectangle {
+            id: segRect
+            property var sliceData: modelData
+            readonly property int openTotal: Math.max(1, Model.toInt(root.summary.open))
+            readonly property real segmentRatio: sliceData ? (Model.toInt(sliceData.count) / openTotal) : 0
+            readonly property real availWidth: distBar.width - (root.listSlices.length - 1) * Style.space(2)
+            width: Math.max(Style.space(4), Math.round(availWidth * segmentRatio))
+            height: parent.height
+            radius: Style.cornerRadius
+            color: sliceData ? sliceData.color : root.accent
+          }
+        }
       }
 
       Repeater {
         model: root.lists
         delegate: Bar {
-          required property var modelData
-          label: Model.squish(modelData.name) || "No list"
-          value: String(Model.toInt(modelData.count))
-          ratio: Model.toInt(modelData.count) / root.peakOf(root.lists, "count")
+          property var itemData: modelData
+          label: itemData ? (Model.squish(itemData.name) || "No list") : "No list"
+          value: itemData ? String(Model.toInt(itemData.count)) : "0"
+          ratio: itemData ? (Model.toInt(itemData.count) / root.peakOf(root.lists, "count")) : 0
+          barColor: itemData ? Model.listColor(itemData.color, index) : root.accent
+          showDot: true
         }
       }
     }
@@ -317,10 +578,11 @@ Item {
         Repeater {
           model: root.priorities
           delegate: Chip {
-            required property var modelData
-            visible: Model.toInt(modelData.count) > 0
-            label: String(modelData.label || "None")
-            value: String(Model.toInt(modelData.count))
+            property var prioData: modelData
+            visible: prioData ? (Model.toInt(prioData.count) > 0) : false
+            label: prioData ? String(prioData.label || "None") : "None"
+            value: prioData ? String(Model.toInt(prioData.count)) : "0"
+            textColor: prioData ? Model.priorityColor(prioData.priority, root.foreground, Color.urgent) : root.foreground
           }
         }
       }
@@ -338,10 +600,11 @@ Item {
       Repeater {
         model: root.tags
         delegate: Bar {
-          required property var modelData
-          label: "#" + String(modelData.tag || "")
-          value: String(Model.toInt(modelData.count))
-          ratio: Model.toInt(modelData.count) / root.peakOf(root.tags, "count")
+          property var tagData: modelData
+          label: tagData ? ("#" + String(tagData.tag || "")) : "#"
+          value: tagData ? String(Model.toInt(tagData.count)) : "0"
+          ratio: tagData ? (Model.toInt(tagData.count) / root.peakOf(root.tags, "count")) : 0
+          barColor: Model.listColor("", index + 4)
         }
       }
     }

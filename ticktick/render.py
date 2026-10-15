@@ -357,6 +357,29 @@ def _stats(payload: dict, s: Style, width: int) -> str:
             else:
                 lines.append(s(DIM, f"    {label} ·"))
 
+    heatmap = payload.get("heatmap") or {}
+    weeks = heatmap.get("weeks") or []
+    if weeks:
+        lines.append(s(DIM, "  activity heatmap"))
+        for row_idx, day_name in enumerate(["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]):
+            row_chars = []
+            for w in weeks:
+                if row_idx < len(w):
+                    cell = w[row_idx]
+                    lvl = int(_to_number(cell.get("level")))
+                    if lvl < 0:
+                        row_chars.append(" ")
+                    elif lvl == 0:
+                        row_chars.append(s(DIM, "·"))
+                    elif lvl == 1:
+                        row_chars.append(s(GREEN, "░"))
+                    elif lvl == 2:
+                        row_chars.append(s(GREEN, "▒"))
+                    else:
+                        row_chars.append(s(GREEN, "█"))
+            prefix = day_name if row_idx in (0, 2, 4) else "   "
+            lines.append(f"    {s(DIM, prefix)} {' '.join(row_chars)}")
+
     for title, entries, key in (
         ("by list", dist.get("byList") or [], "name"),
         ("by tag", dist.get("byTag") or [], "tag"),

@@ -239,6 +239,7 @@ class StatsTest(Base):
         self.assertEqual(set(payload["distribution"]),
                          {"byList", "byPriority", "byBucket", "byTag", "notes", "total"})
         self.assertIn("summary", payload)
+        self.assertIn("heatmap", payload)
         # The fake serves no /habit or /focus route, so those sections are zeroed or
         # absent — but the keys must still be present, or the widget's binding renders
         # the literal string `undefined`.

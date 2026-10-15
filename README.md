@@ -272,8 +272,11 @@ on.
 
 - **Completed** — a bar per day over the **Done** window (`completedDays`), from the one
   endpoint that can see finished work.
-- **Open work** — the outstanding tasks grouped by list, with a priority chip row and a
-  tag breakdown, all read from the same rows the task pane renders.
+- **Activity heatmap** — a 5-week calendar-aligned activity grid (weeks × 7 days) showing
+  daily completion frequency and intensity.
+- **Open work** — the outstanding tasks grouped by list with a proportional distribution
+  bar and palette coloring, with a priority chip row and a tag breakdown, all read from
+  the same rows the task pane renders.
 - **Habits and focus** — the day's check-in tally, the best current streak, and how many
   pomodoros and minutes were logged today.
 

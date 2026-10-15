@@ -204,11 +204,12 @@ class Collect(unittest.TestCase):
         )
         self.assertEqual(payload["days"], 7)
         self.assertEqual(set(payload), {"days", "generated", "summary", "trend",
-                                        "distribution", "habits", "focus"})
+                                        "distribution", "habits", "focus", "heatmap"})
         self.assertEqual(payload["summary"]["completed"], 1)
         self.assertEqual(payload["habits"]["done"], 1)
         self.assertEqual(payload["focus"]["minutes"], 50)
         self.assertEqual(len(payload["trend"]), 7)
+        self.assertEqual(len(payload["heatmap"]["weeks"]), 5)
 
     def test_missing_habits_and_focus_stay_null_rather_than_empty(self) -> None:
         payload = stats.collect([], [], now=at(16))
@@ -218,6 +219,52 @@ class Collect(unittest.TestCase):
     def test_the_window_is_clamped_on_the_way_in(self) -> None:
         self.assertEqual(stats.collect([], [], now=at(16), days=0)["days"], 1)
         self.assertEqual(stats.collect([], [], now=at(16), days=500)["days"], stats.MAX_DAYS)
+
+
+class Heatmap(unittest.TestCase):
+    def test_heatmap_generates_five_calendar_weeks(self) -> None:
+        # 2026-10-16 is Friday (weekday=4).
+        # End Sunday of current week is 2026-10-18.
+        # 5 weeks = 35 days total, starting Monday 2026-09-14.
+        hm = stats.heatmap_data([], now=at(16), weeks=5)
+        self.assertEqual(hm["weekCount"], 5)
+        self.assertEqual(len(hm["weeks"]), 5)
+        self.assertEqual(len(hm["days"]), 35)
+        self.assertEqual(hm["weeks"][0][0]["weekdayName"], "Mon")
+        self.assertEqual(hm["weeks"][-1][-1]["weekdayName"], "Sun")
+        self.assertEqual(hm["weeks"][0][0]["date"], "2026-09-14")
+        self.assertEqual(hm["weeks"][-1][-1]["date"], "2026-10-18")
+
+    def test_heatmap_identifies_today_and_future(self) -> None:
+        hm = stats.heatmap_data([], now=at(16), weeks=5)
+        today_cell = [d for d in hm["days"] if d["isToday"]]
+        self.assertEqual(len(today_cell), 1)
+        self.assertEqual(today_cell[0]["date"], "2026-10-16")
+        self.assertFalse(today_cell[0]["isFuture"])
+
+        # Saturday and Sunday after today are future
+        future_cells = [d for d in hm["days"] if d["isFuture"]]
+        self.assertEqual(len(future_cells), 2)
+        self.assertEqual([d["date"] for d in future_cells], ["2026-10-17", "2026-10-18"])
+        for fc in future_cells:
+            self.assertEqual(fc["level"], -1)
+
+    def test_heatmap_counts_completions_and_levels(self) -> None:
+        rows = [
+            done_row(14),  # count 1 -> level 1
+            done_row(15), done_row(15),  # count 2 -> level 2
+            done_row(16), done_row(16), done_row(16), done_row(16),  # count 4 -> level 3
+        ]
+        hm = stats.heatmap_data(rows, now=at(16), weeks=5)
+        by_date = {d["date"]: d for d in hm["days"]}
+        self.assertEqual(by_date["2026-10-14"]["count"], 1)
+        self.assertEqual(by_date["2026-10-14"]["level"], 1)
+        self.assertEqual(by_date["2026-10-15"]["count"], 2)
+        self.assertEqual(by_date["2026-10-15"]["level"], 2)
+        self.assertEqual(by_date["2026-10-16"]["count"], 4)
+        self.assertEqual(by_date["2026-10-16"]["level"], 3)
+        self.assertEqual(hm["total"], 7)
+        self.assertEqual(hm["maxCount"], 4)
 
 
 if __name__ == "__main__":

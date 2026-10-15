@@ -257,3 +257,34 @@ test("the bar label survives rubbish", () => {
   assert.strictEqual(Model.barLabel(-1, -1), "")
   assert.strictEqual(Model.barLabel("2", "1"), "2  1♦")
 })
+
+// --- pie slices and palette ------------------------------------------------
+
+test("listColor preserves valid hex colors and falls back to palette", () => {
+  assert.strictEqual(Model.listColor("#F18181", 0), "#F18181")
+  assert.strictEqual(Model.listColor("#abc", 1), "#abc")
+  assert.strictEqual(Model.listColor("", 0), Model.LIST_PALETTE[0])
+  assert.strictEqual(Model.listColor(null, 1), Model.LIST_PALETTE[1])
+})
+
+test("pieSlices computes slice percentages and angles", () => {
+  const items = [
+    { name: "Work", count: 3, color: "#F18181" },
+    { name: "Home", count: 1, color: "#61BD4F" }
+  ]
+  const slices = Model.pieSlices(items, 4)
+  assert.strictEqual(slices.length, 2)
+  assert.strictEqual(slices[0].label, "Work")
+  assert.strictEqual(slices[0].percent, 75)
+  assert.strictEqual(slices[1].label, "Home")
+  assert.strictEqual(slices[1].percent, 25)
+  // Total sweep angle should be 2*PI
+  assert.strictEqual(slices[0].sweepAngle + slices[1].sweepAngle, Math.PI * 2)
+})
+
+test("pieSlices survives empty or missing inputs", () => {
+  assert.deepStrictEqual(plain(Model.pieSlices([], 0)), [])
+  assert.deepStrictEqual(plain(Model.pieSlices(undefined, 0)), [])
+  assert.deepStrictEqual(plain(Model.pieSlices([{ count: 0 }], 0)), [])
+})
+
