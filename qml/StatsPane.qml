@@ -175,7 +175,7 @@ Item {
       id: labelBox
       anchors.left: parent.left
       anchors.verticalCenter: parent.verticalCenter
-      width: Math.min(Style.space(120), parent.width * 0.35)
+      width: Math.min(Style.space(90), parent.width * 0.35)
       spacing: Style.spacing.xs
 
       Rectangle {
@@ -488,7 +488,7 @@ Item {
       }
     }
 
-    // ---- open work by list
+    // ---- open work by list (with Pie/Donut Chart)
     Column {
       visible: root.loaded && root.lists.length > 0
       width: parent.width
@@ -520,39 +520,90 @@ Item {
         }
       }
 
-      // Proportional segmented bar for open tasks across lists
+      // Pie/Donut Chart & List Breakdown side-by-side
       Row {
-        id: distBar
-        visible: root.listSlices.length > 0
         width: parent.width
-        height: Style.space(8)
-        spacing: Style.space(2)
+        spacing: Style.spacing.md
 
-        Repeater {
-          model: root.listSlices
-          delegate: Rectangle {
-            id: segRect
-            property var sliceData: modelData
-            readonly property int openTotal: Math.max(1, Model.toInt(root.summary.open))
-            readonly property real segmentRatio: sliceData ? (Model.toInt(sliceData.count) / openTotal) : 0
-            readonly property real availWidth: distBar.width - (root.listSlices.length - 1) * Style.space(2)
-            width: Math.max(Style.space(4), Math.round(availWidth * segmentRatio))
-            height: parent.height
-            radius: Style.cornerRadius
-            color: sliceData ? sliceData.color : root.accent
+        // Donut Pie Chart
+        Item {
+          id: pieContainer
+          width: Style.space(96)
+          height: Style.space(96)
+          anchors.verticalCenter: parent.verticalCenter
+
+          Canvas {
+            id: pieCanvas
+            anchors.fill: parent
+            onPaint: {
+              var ctx = getContext("2d")
+              ctx.clearRect(0, 0, width, height)
+              var slices = root.listSlices
+              if (!slices || slices.length === 0) return
+
+              var cx = width / 2
+              var cy = height / 2
+              var outerR = Math.min(cx, cy) - 2
+              var innerR = outerR * 0.58
+
+              for (var i = 0; i < slices.length; i++) {
+                var s = slices[i]
+                ctx.beginPath()
+                ctx.arc(cx, cy, outerR, s.startAngle, s.endAngle, false)
+                ctx.arc(cx, cy, innerR, s.endAngle, s.startAngle, true)
+                ctx.closePath()
+                ctx.fillStyle = s.color
+                ctx.fill()
+              }
+            }
+
+            Component.onCompleted: requestPaint()
+
+            Connections {
+              target: root
+              function onListSlicesChanged() { pieCanvas.requestPaint() }
+            }
+          }
+
+          Column {
+            anchors.centerIn: parent
+            spacing: 0
+            Text {
+              anchors.horizontalCenter: parent.horizontalCenter
+              text: String(Model.toInt(root.summary.open))
+              color: root.foreground
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.title
+              font.bold: true
+            }
+            Text {
+              anchors.horizontalCenter: parent.horizontalCenter
+              text: "tasks"
+              color: root.dim
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+            }
           }
         }
-      }
 
-      Repeater {
-        model: root.lists
-        delegate: Bar {
-          property var itemData: modelData
-          label: itemData ? (Model.squish(itemData.name) || "No list") : "No list"
-          value: itemData ? String(Model.toInt(itemData.count)) : "0"
-          ratio: itemData ? (Model.toInt(itemData.count) / root.peakOf(root.lists, "count")) : 0
-          barColor: itemData ? Model.listColor(itemData.color, index) : root.accent
-          showDot: true
+        // List bars on the right
+        Column {
+          width: parent.width - pieContainer.width - Style.spacing.md
+          anchors.verticalCenter: parent.verticalCenter
+          spacing: Style.spacing.xs
+
+          Repeater {
+            model: root.lists
+            delegate: Bar {
+              property var itemData: modelData
+              width: parent.width
+              label: itemData ? (Model.squish(itemData.name) || "No list") : "No list"
+              value: itemData ? (Model.toInt(itemData.count) + " (" + Math.round((Model.toInt(itemData.count) / Math.max(1, Model.toInt(root.summary.open))) * 100) + "%)") : "0"
+              ratio: itemData ? (Model.toInt(itemData.count) / root.peakOf(root.lists, "count")) : 0
+              barColor: itemData ? Model.listColor(itemData.color, index) : root.accent
+              showDot: true
+            }
+          }
         }
       }
     }
