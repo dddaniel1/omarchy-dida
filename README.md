@@ -1,8 +1,8 @@
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/img/hero-dark.svg">
-    <source media="(prefers-color-scheme: light)" srcset="docs/img/hero-light.svg">
-    <img alt="omarchy-dida — 滴答清单：任务、习惯与专注，尽在 Omarchy 状态栏" src="docs/img/hero-dark.svg" width="900">
+    <source media="(prefers-color-scheme: dark)" srcset="docs/img/hero-dark.svg?v=e9b13d9">
+    <source media="(prefers-color-scheme: light)" srcset="docs/img/hero-light.svg?v=e9b13d9">
+    <img alt="omarchy-dida — 滴答清单：任务、习惯与专注，尽在 Omarchy 状态栏" src="docs/img/hero-dark.svg?v=e9b13d9" width="900">
   </picture>
 </p>
 
