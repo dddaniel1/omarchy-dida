@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 320" width="1200" height="320" role="img" aria-label="omarchy-dida — Dida365 tasks in the Omarchy bar">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 320" width="1200" height="320" role="img" aria-label="omarchy-dida — 滴答清单：任务、习惯与专注，尽在 Omarchy 状态栏">
   <defs>
     <pattern id="grid" width="16" height="16" patternUnits="userSpaceOnUse">
       <circle cx="1" cy="1" r="1" fill="#CCD0DA"/>
@@ -27,24 +27,24 @@
           stroke-linecap="round" stroke-linejoin="round"/>
   </g>
 
-  <g font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">
+  <g font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, Noto Sans CJK SC, monospace">
     <text x="130" y="96" font-size="46" font-weight="700" fill="#4C4F69" letter-spacing="-1.5">omarchy-dida</text>
     <rect x="64" y="122" width="360" height="2" rx="1" fill="url(#rule)"/>
-    <text x="64" y="160" font-size="19" fill="#5C5F77">Dida365 in your Omarchy bar.</text>
-    <text x="64" y="188" font-size="19" fill="#5C5F77">Keyboard-driven. Local-first. Zero dependencies.</text>
+    <text x="64" y="160" font-size="19" fill="#5C5F77">滴答清单，常驻 Omarchy 状态栏。</text>
+    <text x="64" y="188" font-size="19" fill="#5C5F77">任务管理 · 习惯打卡 · 专注计时</text>
 
     <g font-size="13" fill="#1E66F5">
       <g transform="translate(64,214)">
         <rect width="122" height="28" rx="6" fill="none" stroke="#BCC0CC"/>
-        <text x="14" y="19">smart lists</text>
+        <text x="14" y="19">智能清单</text>
       </g>
       <g transform="translate(196,214)">
         <rect width="148" height="28" rx="6" fill="none" stroke="#BCC0CC"/>
-        <text x="14" y="19" fill="#40A02B">offline writes</text>
+        <text x="14" y="19" fill="#40A02B">离线任务同步</text>
       </g>
       <g transform="translate(354,214)">
         <rect width="126" height="28" rx="6" fill="none" stroke="#BCC0CC"/>
-        <text x="14" y="19" fill="#FE640B">quick add</text>
+        <text x="14" y="19" fill="#FE640B">快捷添加</text>
       </g>
     </g>
 
@@ -58,59 +58,45 @@
         <path d="M2 8 l4 4 l7 -9" fill="none" stroke="#FE640B" stroke-width="2"
               stroke-linecap="round" stroke-linejoin="round"/>
         <text x="22" y="12" font-size="13" fill="#4C4F69">3</text>
-        <text x="38" y="12" font-size="13" fill="#8C8FA1">due</text>
+        <text x="38" y="12" font-size="13" fill="#8C8FA1">今天</text>
       </g>
     </g>
   </g>
 
-  <!-- an abstract of the popup, not a fake screenshot -->
-  <g clip-path="url(#card)">
+  <!-- Simplified Chinese task view; demo content, not a screenshot. -->
+  <g clip-path="url(#card)" font-family="Noto Sans CJK SC, sans-serif">
     <rect x="704" y="40" width="432" height="240" fill="#E6E9EF"/>
-    <g font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">
-      <text x="726" y="72" font-size="15" fill="#4C4F69">Dida 365</text>
-      <text x="726" y="92" font-size="11" fill="#8C8FA1">1 OVERDUE · 4 TODAY</text>
-
-      <g font-size="10" fill="#5C5F77">
-        <rect x="726" y="106" width="52" height="20" rx="5" fill="#CCD0DA"/>
-        <text x="738" y="120" fill="#4C4F69">Today</text>
-        <rect x="786" y="106" width="68" height="20" rx="5" fill="none" stroke="#CCD0DA"/>
-        <text x="798" y="120">Tomorrow</text>
-        <rect x="862" y="106" width="52" height="20" rx="5" fill="none" stroke="#CCD0DA"/>
-        <text x="874" y="120">Next 7</text>
-        <rect x="922" y="106" width="46" height="20" rx="5" fill="none" stroke="#CCD0DA"/>
-        <text x="934" y="120">Inbox</text>
-        <rect x="976" y="106" width="40" height="20" rx="5" fill="none" stroke="#CCD0DA"/>
-        <text x="988" y="120">Lists</text>
-      </g>
-
-      <!-- section: INBOX -->
-      <text x="726" y="152" font-size="9" fill="#8C8FA1" letter-spacing="1.2">INBOX</text>
-      <g transform="translate(726,160)">
-        <rect x="0" y="0" width="11" height="11" rx="3" fill="none" stroke="#8C8FA1"/>
-        <rect x="20" y="3" width="132" height="6" rx="3" fill="#BCC0CC"/>
-        <text x="330" y="10" font-size="10" fill="#D20F39">28 Jul</text>
-      </g>
-      <g transform="translate(726,180)">
-        <rect x="0" y="0" width="11" height="11" rx="3" fill="none" stroke="#8C8FA1"/>
-        <rect x="20" y="3" width="104" height="6" rx="3" fill="#BCC0CC"/>
-        <text x="332" y="10" font-size="10" fill="#8C8FA1">14:00</text>
-      </g>
-
-      <!-- section: UNIVERSITY WORK -->
-      <text x="726" y="212" font-size="9" fill="#8C8FA1" letter-spacing="1.2">UNIVERSITY WORK</text>
-      <g transform="translate(726,220)">
-        <rect x="0" y="1" width="11" height="9" rx="2" fill="none" stroke="#8C8FA1"/>
-        <path d="M2.5 5.5 h6" stroke="#8C8FA1" stroke-width="1.2"/>
-        <rect x="20" y="3" width="88" height="6" rx="3" fill="#BCC0CC"/>
-        <text x="332" y="10" font-size="10" fill="#8C8FA1">11:00</text>
-      </g>
-      <g transform="translate(726,240)">
-        <rect x="0" y="0" width="11" height="11" rx="3" fill="none" stroke="#FE640B"/>
-        <rect x="20" y="3" width="146" height="6" rx="3" fill="#8C8FA1"/>
-        <circle cx="316" cy="6" r="3" fill="#FE640B"/>
-        <text x="330" y="10" font-size="10" fill="#8C8FA1">18:00</text>
-      </g>
+    <path d="M832 52 V268" stroke="#BCC0CC"/>
+    <rect x="716" y="52" width="104" height="24" rx="4" fill="none" stroke="#BCC0CC"/>
+    <text x="728" y="69" font-size="11" fill="#5C5F77">搜索</text>
+    <rect x="716" y="84" width="104" height="24" rx="4" fill="#CCD0DA"/>
+    <g font-size="11" fill="#4C4F69">
+      <text x="728" y="101">今天</text><text x="802" y="101">3</text>
+      <text x="728" y="127">收集箱</text>
+      <text x="728" y="153">最近 7 天</text>
+      <text x="728" y="179">全部任务</text>
+      <text x="728" y="205">已完成</text>
+      <text x="728" y="231">工具</text>
+      <text x="728" y="260">专注</text>
     </g>
+    <text x="848" y="72" font-size="15" font-weight="600" fill="#4C4F69">今天</text>
+    <text x="1062" y="72" font-size="10" fill="#5C5F77">按清单</text>
+    <path d="M848 84 H1120" stroke="#BCC0CC"/>
+    <text x="848" y="108" font-size="10" fill="#5C5F77">工作</text>
+    <g fill="none" stroke="#5C5F77" stroke-width="1.2">
+      <rect x="850" y="121" width="11" height="11" rx="2"/>
+      <rect x="850" y="163" width="11" height="11" rx="2"/>
+      <rect x="850" y="220" width="11" height="11" rx="2"/>
+    </g>
+    <g font-size="12" fill="#4C4F69">
+      <text x="874" y="132">整理本周计划</text>
+      <text x="874" y="174">完成项目报告</text>
+      <text x="874" y="231">阅读 20 分钟</text>
+    </g>
+    <text x="874" y="148" font-size="10" fill="#FE640B">逾期 · 昨天</text>
+    <text x="874" y="190" font-size="10" fill="#5C5F77">今天 18:00</text>
+    <text x="848" y="211" font-size="10" fill="#5C5F77">个人</text>
+    <text x="848" y="263" font-size="11" fill="#5C5F77">＋ 添加任务…</text>
   </g>
   <rect x="704" y="40" width="432" height="240" rx="14" fill="none" stroke="#BCC0CC" stroke-width="1.5"/>
 </svg>
