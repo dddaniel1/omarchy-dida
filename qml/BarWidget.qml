@@ -42,7 +42,7 @@ Panel {
   // accepts exactly one handler. Ours adds refresh/add/count, so Panel's must stand down.
   manageIpc: false
 
-  readonly property color foreground: bar ? bar.barForeground : Color.foreground
+  readonly property color foreground: Color.popups.text
   readonly property color urgent: bar ? bar.urgent : Color.urgent
   readonly property color dim: Qt.darker(foreground, 1.45)
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
