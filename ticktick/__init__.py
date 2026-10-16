@@ -18,6 +18,6 @@ one JSON object per invocation when stdout is a pipe, which is what QML parses, 
 formatted view when stdout is a terminal.
 """
 
-__version__ = "1.0.0"
+__version__ = "1.0.4"
 
 __all__ = ["__version__"]

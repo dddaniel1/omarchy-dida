@@ -6,6 +6,52 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.0.4] - 2026-10-16
+
+### Added
+
+- System-locale Chinese interface with English fallback.
+- Restore completed tasks through a full task update with server verification.
+- Calendar popups for task start and due dates, preserving explicit times.
+- Task-linked stopwatch actions and anniversary counts in navigation.
+
+### Changed
+
+- Simplify sidebar navigation and keep history/statistics beside focus controls.
+- Place the search icon inside the input and keep Done directly accessible.
+
+## [1.0.3] - 2026-10-16
+
+### Changed
+
+- Move sidebar keyboard hints into hover tooltips so task counts remain the only
+  numbers permanently displayed beside navigation labels.
+
+## [1.0.2] - 2026-10-16
+
+### Fixed
+
+- Derive number shortcuts and view cycling from the sidebar's shared view order.
+  Show bracketed shortcut numbers separately from task counts, including when
+  Habits or Stats is hidden.
+
+## [1.0.1] - 2026-10-16
+
+### Fixed
+
+- Fetch the full five-week completion heatmap independently of the trend window;
+  unavailable history is shown as unavailable instead of zero activity.
+- Statistics now show update progress, partial warnings and a retry action. Refresh
+  and sync shortcuts reload statistics while this view is open.
+- Add keyboard scrolling and heatmap inspection, accessible chart descriptions,
+  actual trend dates and weekly aggregation for periods longer than fourteen days.
+
+### Changed
+
+- Use a compact contribution heatmap with a numeric legend, responsive summary
+  metrics and full-width list names. Remove the duplicate donut and make bars match
+  their displayed percentages; clarify priority and overlapping tag counts.
+
 TickTick's own rules, in the bar.
 
 ### Added

@@ -1,4 +1,5 @@
 import QtQuick
+import "I18n.js" as I18n
 import qs.Commons
 import qs.Ui
 import "Model.js" as Model
@@ -15,6 +16,9 @@ CursorSurface {
 
   property var task: null
   property bool expanded: false
+  property bool selectionMode: false
+  property bool selected: false
+  signal selectionRequested()
   property bool showProjectChip: true
   property bool showFocusAction: false
   property bool focusAvailable: true
@@ -27,6 +31,7 @@ CursorSurface {
   property bool _hover: false
 
   signal focusRequested()
+  signal stopwatchRequested()
   signal completeRequested()
   signal deleteRequested()
   signal expandRequested()
@@ -39,9 +44,9 @@ CursorSurface {
   // What a finished task's date means is when it was finished, not when it was due.
   // `completedLabel` only exists on rows from the completed endpoint, so the due
   // date still stands in for anything else that reads as done.
-  readonly property string dueText: root.done
+  readonly property string dueText: I18n.dateLabel(root.done
     ? (Model.squish(row.completedLabel) || Model.squish(row.dueLabel))
-    : Model.squish(row.dueLabel)
+    : Model.squish(row.dueLabel))
   readonly property string progressText: Model.checklistProgress(row.itemsDone, row.itemsTotal)
   readonly property int priority: Model.toInt(row.priority)
   readonly property bool overdue: Model.squish(row.bucket).toLowerCase() === "overdue"
@@ -51,9 +56,7 @@ CursorSurface {
   readonly property bool note: Model.isNote(row)
   // Finished work — the Done view paints it with this same delegate.
   readonly property bool done: Model.isDone(row)
-  // Only an open to-do has anything to tick. A note cannot be completed and a
-  // finished task cannot be reopened: the Open API cannot even look one up again.
-  readonly property bool checkable: !note && !done
+  readonly property bool checkable: !note
 
   // A project colour comes from the account, so it can be anything or nothing.
   // Anything that is not an obvious hex falls back to the theme rather than
@@ -64,7 +67,7 @@ CursorSurface {
 
   // The open row keeps the "current" tint so the detail underneath reads as
   // belonging to it even after the cursor walks away.
-  current: expanded
+  current: expanded || selected
   implicitHeight: Math.max(check.implicitHeight, labels.implicitHeight, deleteAction.height) + Style.spacing.lg
 
   HoverHandler {
@@ -76,7 +79,7 @@ CursorSurface {
     hoverEnabled: true
     cursorShape: Qt.PointingHandCursor
     onContainsMouseChanged: root.hovered(containsMouse)
-    onClicked: root.expandRequested()
+    onClicked: if (root.selectionMode) root.selectionRequested(); else root.expandRequested()
   }
 
   Text {
@@ -87,7 +90,7 @@ CursorSurface {
     // The box says what the task IS, never what the cursor would do to it. It used to
     // tick itself under the cursor as a preview of Enter, which is indistinguishable
     // from a task that is actually finished — every row you pointed at read as done.
-    text: root.note ? "󰎞" : (root.done ? "󰄲" : "󰄱")
+    text: root.selectionMode ? (root.selected ? "󰄲" : "󰄱") : root.note ? "󰎞" : (root.done ? "󰄲" : "󰄱")
     // The cursor sharpens the empty box instead: same glyph, more contrast, which is
     // an affordance rather than a claim about the task.
     color: root.checkable && root.hasCursor ? root.foreground : root.dim
@@ -101,7 +104,7 @@ CursorSurface {
       enabled: root.checkable
       cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
       onContainsMouseChanged: if (containsMouse) root.hovered(true)
-      onClicked: root.completeRequested()
+      onClicked: if (root.selectionMode) root.selectionRequested(); else root.completeRequested()
     }
   }
 
@@ -211,12 +214,32 @@ CursorSurface {
     spacing: Style.spacing.xs
 
     Button {
+      objectName: "taskStopwatchButton"
+      visible: root.showFocusAction && root.checkable && !root.done && (root.hasCursor || root._hover)
+      enabled: root.focusAvailable && String(root.row.id || "") !== ""
+        && String(root.row.id).indexOf("local-draft-") !== 0
+      iconText: "󱎫"
+      tooltipText: root.focusAvailable ? I18n.tr("Start stopwatch for this task") : I18n.tr("A focus timer is already active")
+      width: Style.space(28)
+      height: Style.space(28)
+      horizontalPadding: 0
+      verticalPadding: 0
+      iconSize: Style.font.body
+      foreground: root.foreground
+      fontFamily: root.fontFamily
+      focusable: true
+      opacity: enabled ? 1 : 0.35
+      onHovered: function (isHovered) { if (isHovered) root.hovered(true) }
+      onClicked: root.stopwatchRequested()
+    }
+
+    Button {
       objectName: "taskFocusButton"
-      visible: root.showFocusAction && root.checkable && (root.hasCursor || root._hover)
+      visible: root.showFocusAction && root.checkable && !root.done && (root.hasCursor || root._hover)
       enabled: root.focusAvailable && String(root.row.id || "") !== ""
         && String(root.row.id).indexOf("local-draft-") !== 0
       iconText: "󰐊"
-      tooltipText: root.focusAvailable ? "Start focus for this task" : "A focus timer is already active"
+      tooltipText: root.focusAvailable ? I18n.tr("Start focus for this task") : I18n.tr("A focus timer is already active")
       width: Style.space(28)
       height: Style.space(28)
       horizontalPadding: 0

@@ -409,7 +409,7 @@ class Client:
     ) -> list[dict]:
         """`POST /task/search` — full-text search across the **whole account**.
 
-        Absent from the published documentation and worth far more than it looks: it
+        Documented in the current Open API reference; it
         reaches completed tasks and projects the undone list never fetched, so it is
         the only search that can answer "where did I put that" rather than merely
         filtering what is already on screen.
@@ -434,7 +434,7 @@ class Client:
     def tags(self) -> list[dict]:
         """`GET /tag` — every tag, as ``{name, label, sortOrder, color, parent, type}``.
 
-        Undocumented but live-verified. `name` is the lowercase key the task's `tags`
+        Documented and live-verified. `name` is the lowercase key the task's `tags`
         array holds; `label` is what the user typed and what should be displayed.
         `parent` names another tag's `name`, so tags form a tree.
         """
@@ -444,6 +444,73 @@ class Client:
     def create_tag(self, name: str, label: str | None = None) -> dict:
         """`POST /tag` — create a tag. `label` defaults to `name`."""
         return self.request("POST", "/tag", {"name": name, "label": label or name}) or {}
+
+    def preferences(self) -> dict:
+        return self.request("POST", "/preference", {}) or {}
+
+    def revoke_token(self) -> None:
+        url = urllib.parse.urlsplit(self.BASE)
+        target = urllib.parse.urlunsplit((url.scheme, url.netloc, "/oauth/revoke", "", ""))
+        boundary = "dida-revoke-form"
+        body = (f"--{boundary}\r\nContent-Disposition: form-data; name=\"token\"\r\n\r\n"
+                f"{self.token}\r\n--{boundary}--\r\n").encode()
+        self._send("POST", target, body,
+                   {**self._headers, "Content-Type": f"multipart/form-data; boundary={boundary}"})
+
+    def countdowns(self) -> list[dict]:
+        return self.request("GET", "/countdown") or []
+
+    def complete_tasks(self, pid: str, task_ids: list[str]) -> list[str]:
+        if not 1 <= len(task_ids) <= 50:
+            raise ValueError("completeTasks requires 1–50 task IDs")
+        return self.request("POST", "/task/completeTasks",
+                            {"projectId": pid, "taskIds": task_ids}) or []
+
+    def batch_tasks(self, *, add: list[dict], update: list[dict]) -> dict:
+        if len(add) > 50 or len(update) > 50:
+            raise ValueError("batch accepts up to 50 additions and 50 updates")
+        return self.request("POST", "/task/batch", {"add": add, "update": update}) or {}
+
+    def undone_tasks(self, **fields: Any) -> list[dict]:
+        return self.request("POST", "/task/undone", fields) or []
+
+    def comments(self, pid: str, tid: str) -> list[dict]:
+        return self.request("GET", f"/project/{_seg(pid)}/task/{_seg(tid)}/comments") or []
+
+    def add_comment(self, pid: str, tid: str, title: str) -> dict:
+        return self.request("POST", f"/project/{_seg(pid)}/task/{_seg(tid)}/comment",
+                            {"title": title}) or {}
+
+    def delete_comment(self, pid: str, tid: str, comment_id: str) -> None:
+        self.request("DELETE", f"/project/{_seg(pid)}/task/{_seg(tid)}/comment/{_seg(comment_id)}")
+
+    def members(self, pid: str) -> list[dict]:
+        return self.request("GET", f"/project/{_seg(pid)}/members") or []
+
+    def assign_task(self, pid: str, tid: str, username: str = "") -> dict:
+        body = {"projectId": pid, "taskId": tid}
+        if username:
+            body["assigneeUsername"] = username
+        return self.request("POST", "/task/assign" if username else "/task/unassign", body) or {}
+
+    def create_column(self, pid: str, **fields: Any) -> dict:
+        return self.request("POST", f"/project/{_seg(pid)}/column", fields) or {}
+
+    def update_column(self, pid: str, cid: str, **fields: Any) -> dict:
+        return self.request("POST", f"/project/{_seg(pid)}/column/{_seg(cid)}", fields) or {}
+
+    def habit(self, habit_id: str) -> dict:
+        return self.request("GET", f"/habit/{_seg(habit_id)}") or {}
+
+    def create_habit(self, **fields: Any) -> dict:
+        return self.request("POST", "/habit", fields) or {}
+
+    def update_habit(self, habit_id: str, **fields: Any) -> dict:
+        return self.request("POST", f"/habit/{_seg(habit_id)}", fields) or {}
+
+    def focus_record(self, focus_id: str, focus_type: int = 0) -> dict:
+        query = urllib.parse.urlencode({"type": int(focus_type)})
+        return self.request("GET", f"/focus/{_seg(focus_id)}?{query}") or {}
 
     # -------------------------------------------------------- project groups
 

@@ -1,4 +1,5 @@
 import QtQuick
+import "I18n.js" as I18n
 import QtQuick.Controls
 import Quickshell.Io
 import qs.Commons
@@ -86,22 +87,13 @@ Panel {
   // activateRequested. This flag is how the two are told apart.
   property bool _returnConsumed: false
 
-  // TickTick's own smart lists, in its sidebar order, plus Done and (optionally)
-  // Habits. The number keys follow this order, so it is the one place it is written
-  // down, and Sidebar draws the same five smart lists above them.
+  // The rendered sidebar is also the keyboard order, including optional views.
   readonly property var viewOptions: {
-    var out = [
-      { value: "today", label: "Today" },
-      { value: "tomorrow", label: "Tomorrow" },
-      { value: "next", label: "Next 7" },
-      { value: "inbox", label: "Inbox" },
-      { value: "all", label: "All" }
-    ]
-    // Only offered when the section is switched on, so the sidebar, the number keys
-    // and the bar badge all disappear together rather than disagreeing.
-    if (tt.showHabits) out.push({ value: "habits", label: "Habits" })
-    if (tt.showStats) out.push({ value: "stats", label: "Stats" })
-    out.push({ value: "completed", label: "Done" })
+    var out = []
+    for (var i = 0; i < sidebar.viewOrder.length; i++) {
+      var item = sidebar.viewOrder[i]
+      out.push({ value: item.value, label: item.label })
+    }
     return out
   }
   readonly property var views: {
@@ -115,11 +107,60 @@ Panel {
   readonly property bool projectFilterActive: tt.view === "project" && tt.projectFilter !== ""
   readonly property bool showingHabits: tt.view === "habits"
   readonly property bool showingStats: tt.view === "stats"
+  readonly property bool showingManagement: tt.view === "manage" || tt.view === "countdown"
+  property string contextTitle: ""
+  property bool settingsHome: false
+  property bool settingsSection: false
+  property var contextResources: []
+  property string returnView: "today"
+  property string returnProject: ""
+  property bool selecting: false
+  property var selectedTasks: []
+
+  function openTools(title, resources, task) {
+    settingsHome=false; settingsSection=false
+    managementPane.contextProject="";managementPane.contextTask=""
+    if (tt.view!=="manage") { returnView=tt.view; returnProject=tt.projectFilter }
+    contextTitle=title; contextResources=resources
+    expandedId=""; detailPickerOpen=false
+    tt.setView("manage")
+    managementPane.initialSelection=selectedTasks
+    managementPane.openResource(resources[0],task || null)
+  }
+  function closeTools() {
+    if (settingsSection) { showSettings(); return }
+    settingsHome=false
+    managementPane.formFocus=false; detailPickerOpen=false
+    tt.setView(returnView); tt.setProjectFilter(returnProject)
+    selectedTasks=[]; selecting=false
+    keyCatcher.forceActiveFocus()
+  }
+  function showSettings() {
+    if (tt.view !== "manage") { returnView=tt.view; returnProject=tt.projectFilter }
+    settingsHome=true; settingsSection=false; contextTitle="Settings"
+    managementPane.formFocus=false; detailPickerOpen=false
+    tt.setView("manage")
+  }
+  function openSettingsSection(title, resources) {
+    widget.openTools(title,resources,null)
+    settingsSection=true
+  }
+  function toggleSelection(task) {
+    var ids=selectedTasks.slice(), at=ids.indexOf(task.id)
+    if (at>=0) ids.splice(at,1)
+    else if (ids.length<50) {
+      for (var i=0;i<tt.tasks.length;i++) if (ids.indexOf(tt.tasks[i].id)>=0 && tt.tasks[i].projectId!==task.projectId) {
+        tt.toast("Select tasks from one list at a time"); return
+      }
+      ids.push(task.id)
+    }
+    selectedTasks=ids
+  }
 
   // Habits join the same cursor, section and delegate machinery the tasks use, rather
   // than getting a list of their own: one cursor, one set of keys, one way to draw a row.
   // Stats have no rows at all: the dashboard owns the whole pane.
-  readonly property var rows: widget.showingStats ? []
+  readonly property var rows: widget.showingStats || widget.showingManagement ? []
     : widget.showingHabits ? (tt.habits || []) : (tt.tasks || [])
   readonly property int rowCount: rows.length
 
@@ -136,6 +177,9 @@ Panel {
   // What the task pane's heading says: the list's own name when scoped to one, otherwise
   // the smart list's label.
   function viewLabel() {
+    if (tt.view === "tomorrow") return I18n.tr("Tomorrow")
+    if (tt.view === "stats") return I18n.tr("Statistics")
+    if (tt.view === "manage") return I18n.tr(contextTitle || "Settings")
     if (widget.projectFilterActive) {
       var list = tt.projects || []
       for (var i = 0; i < list.length; i++) {
@@ -146,19 +190,20 @@ Panel {
     for (var j = 0; j < viewOptions.length; j++) {
       if (viewOptions[j].value === tt.view) return viewOptions[j].label
     }
-    return "Tasks"
+    return I18n.tr("Tasks")
   }
 
   readonly property string summary: {
-    if (!tt.authed) return "Not signed in"
-    if (!tt.loaded) return "Loading…"
+    if (!tt.authed) return I18n.tr("Not signed in")
+    if (!tt.loaded) return I18n.tr("Loading…")
     var c = tt.counts || {}
     var over = Number(c.overdue || 0)
     var today = Number(c.today || 0)
+    if (I18n.isChinese(Qt.locale().name)) return over > 0 || today > 0 ? "逾期 " + over + " · 今天 " + today : "暂无到期任务"
     if (over > 0 && today > 0) return over + " overdue · " + today + " today"
     if (over > 0) return over + (over === 1 ? " task overdue" : " tasks overdue")
     if (today > 0) return today + (today === 1 ? " task today" : " tasks today")
-    return "Nothing due"
+    return I18n.tr("Nothing due")
   }
 
   // The bar shows one number: the task badge. The habit count used to ride along
@@ -169,7 +214,7 @@ Panel {
   // --- helpers ----------------------------------------------------------
 
   readonly property var tagOptions: {
-    var out = [{ value: "", label: "Any tag" }]
+    var out = [{ value: "", label: I18n.tr("Any tag") }]
     var list = tt.tags || []
     for (var i = 0; i < list.length; i++) {
       var tag = list[i] || {}
@@ -219,6 +264,7 @@ Panel {
   }
 
   function setView(name) {
+    selecting=false; selectedTasks=[]; managementPane.formFocus=false; detailPickerOpen=false
     tt.setProjectFilter("")
     tt.setView(name)
     cursorIndex = 0
@@ -232,6 +278,7 @@ Panel {
   // Scope the task pane to one list. The view goes to "project" first (which clears any
   // previous filter) and the filter lands second, so the two never fight.
   function openProject(projectId) {
+    selecting=false;selectedTasks=[]
     var id = String(projectId || "")
     if (id === "") return
     tt.setView("project")
@@ -261,7 +308,8 @@ Panel {
   // its refreshes — holding a key does not spray requests.
   function sidebarStep(delta) {
     sidebar.moveCursor(delta)
-    sidebar.activateCurrent()
+    var item = sidebar.navItems[sidebar.cursorIndex]
+    if (item && (item.kind === "view" || item.kind === "project")) sidebar.activateCurrent()
   }
 
   // The section a row opens, or "" when the row above already opened it. What the
@@ -386,6 +434,7 @@ Panel {
   // Esc unwinds one layer at a time rather than slamming the popup shut, so a
   // stray Esc while searching never loses the reader their place.
   function dismiss() {
+    if (tt.view === "manage") { closeTools(); return }
     if (confirmOpen) { cancelDelete(); return }
     if (adding) { closeAdd(); return }
     if (sidebar.searchFocused || tt.search !== "") { closeSearch(true); return }
@@ -566,10 +615,21 @@ Panel {
       PanelKeyCatcher {
         id: keyCatcher
         anchors.fill: parent
+        Keys.onReleased: function(event) {
+          if (!widget.showingStats || blocked || widget.focusPane !== "list") return
+          if (event.key === Qt.Key_PageDown || event.key === Qt.Key_PageUp) {
+            statsFlick.scrollBy((event.key === Qt.Key_PageDown ? 1 : -1) * statsFlick.height * 0.8)
+            event.accepted = true
+          } else if (event.key === Qt.Key_Home || event.key === Qt.Key_End) {
+            statsFlick.contentY = event.key === Qt.Key_Home ? 0 : Math.max(0, statsFlick.contentHeight - statsFlick.height)
+            event.accepted = true
+          }
+        }
         // Any focused text field, an open dropdown, or the modal owns the keyboard.
         blocked: widget.confirmOpen || widget.detailPickerOpen || sortPicker.popupOpen
                  || priorityPicker.popupOpen || tagPicker.popupOpen
                  || sidebar.searchFocused || tokenField.activeFocus || quickAdd.editing
+                 || (widget.showingStats && statsPane.calendarFocus)
 
         onMoveRequested: function (dx, dy) {
           // The sidebar owns the arrows while it has the keyboard: up/down walk the
@@ -581,6 +641,7 @@ Panel {
           }
           if (dx !== 0) { widget.cycleView(dx > 0 ? 1 : -1); return }
           if (dy === 0) return
+          if (widget.showingStats) { statsFlick.scrollBy(dy * Style.space(48)); return }
           if (!widget.cursorActive) { widget.cursorActive = true; return }
           widget.moveCursor(dy)
         }
@@ -600,6 +661,7 @@ Panel {
             tt.checkInHabit(widget.selectedHabit())
             return
           }
+          if (widget.selecting) { var selected=widget.selectedTask(); if(selected) widget.toggleSelection(selected); return }
           widget.completeAt(widget.selectedTask())
         }
 
@@ -612,6 +674,7 @@ Panel {
           if (!tt.authed || widget.showingHabits || widget.showingStats
               || widget.focusPane === "sidebar") return
           var task = widget.selectedTask()
+          if (widget.selecting) { if(task) widget.toggleSelection(task); return }
           if (task) widget.toggleExpanded(task.id)
         }
 
@@ -620,6 +683,12 @@ Panel {
                                && !widget.showingHabits && !widget.showingStats)
                              widget.requestDelete(widget.selectedTask())
         onTabRequested: function (direction) {
+          if (widget.showingManagement && widget.focusPane === "list") { managementPane.focusForm(); return }
+          if (widget.showingStats && widget.focusPane === "list" && direction > 0 && statsPane.calendarDays.length) {
+            statsPane.inspectCalendar()
+            statsFlick.contentY = Math.max(0, Math.min(statsFlick.contentHeight - statsFlick.height, Style.space(200)))
+            return
+          }
           if (widget.focusPane === "sidebar") widget.focusList()
           else widget.focusSidebar()
         }
@@ -630,22 +699,22 @@ Panel {
           if (!tt.authed) return
           // The number keys walk `viewOptions` in order, so the sidebar and the
           // shortcuts cannot drift apart when a view is added or reordered.
-          var digit = "12345678".indexOf(text)
+          var digit = "1234567890".indexOf(text)
           if (digit >= 0 && digit < widget.views.length) {
             widget.setView(widget.views[digit])
             return
           }
           switch (text) {
-          case "r": case "R": tt.refresh(); break
+          case "r": case "R": if (widget.showingManagement) managementPane.load(); else if (widget.showingStats) tt.loadStats(true); else tt.refresh(); break
           // Refresh is cache-first by design; this is how you say "go and look now",
           // and it drains anything queued offline on the way.
-          case "s": case "S": tt.sync(); break
+          case "s": case "S": if (widget.showingManagement) managementPane.load(); else if (widget.showingStats) tt.loadStats(true); else tt.sync(); break
           // The list-only verbs stand down in a view with no rows: adding, sorting and
           // filtering a dashboard would do nothing the user could see.
-          case "a": case "A": if (!widget.showingStats) widget.openAdd(); break
+          case "a": case "A": if (!widget.showingStats && !widget.showingManagement) widget.openAdd(); break
           case "/": widget.openSearch(); break
-          case "o": case "O": if (!widget.showingStats) tt.cycleSort(); break
-          case "f": case "F": if (!widget.showingStats) widget.toggleFilters(); break
+          case "o": case "O": if (!widget.showingStats && !widget.showingManagement) tt.cycleSort(); break
+          case "f": case "F": if (!widget.showingStats && !widget.showingManagement) widget.toggleFilters(); break
           case "d": case "D":
             if (widget.focusPane === "list" && !widget.showingHabits && !widget.showingStats) {
               widget.requestDelete(widget.selectedTask())
@@ -687,6 +756,9 @@ Panel {
             fontFamily: widget.fontFamily
             showHabits: tt.showHabits
             showStats: tt.showStats
+            onOrganizeRequested: widget.openTools("Lists and folders",["project","folder","tag"],null)
+            onFocusHistoryRequested: widget.openTools("Focus history",["focus-record"],null)
+            onSettingsRequested: widget.showSettings()
             onViewSelected: function (value) { widget.setView(value) }
             onProjectSelected: function (projectId) { widget.openProject(projectId) }
             onSearchEdited: function (text) { tt.setSearch(text) }
@@ -770,19 +842,67 @@ Panel {
                   anchors.verticalCenter: parent.verticalCenter
                   spacing: Style.spacing.xs
 
+                  Button {
+                    visible: tt.view === "manage"
+                    text:I18n.tr("Back")
+                    foreground:widget.foreground
+                    fontFamily:widget.fontFamily
+                    focusable:true
+                    onClicked:widget.closeTools()
+                  }
+                  Button {
+                    visible:tt.view === "manage" && widget.contextTitle === "Account settings"
+                    text:I18n.tr("Sign out")
+                    foreground:widget.foreground
+                    onClicked:{tt.signOut();widget.closeTools()}
+                  }
+                  Button {
+                    visible: !widget.showingHabits && !widget.showingStats && !widget.showingManagement
+                    text:widget.selecting ? I18n.tr("Cancel selection") : I18n.tr("Select")
+                    foreground:widget.foreground
+                    fontFamily:widget.fontFamily
+                    onClicked:{widget.selecting=!widget.selecting;widget.selectedTasks=[]}
+                  }
+                  Button {
+                    visible:!widget.showingManagement && widget.selecting && widget.selectedTasks.length>0
+                    text:I18n.tr("Actions (")+widget.selectedTasks.length+")"
+                    foreground:widget.foreground
+                    onClicked:{
+                      var task=tt.taskRow(widget.selectedTasks[0])
+                      widget.openTools("Selected tasks",["batch"],task)
+                    }
+                  }
+
+                  Button {
+                    visible: tt.view === "next" || tt.view === "tomorrow"
+                    text: tt.view === "tomorrow" ? I18n.tr("Next 7 days") : I18n.tr("Tomorrow")
+                    foreground: widget.foreground
+                    fontFamily: widget.fontFamily
+                    focusable: true
+                    onClicked: widget.setView(tt.view === "tomorrow" ? "next" : "tomorrow")
+                  }
+
+                  Button {
+                    visible: widget.showingHabits
+                    text: I18n.tr("Add habit")
+                    foreground: widget.foreground
+                    fontFamily: widget.fontFamily
+                    onClicked: widget.openTools("New habit",["habit"],null)
+                  }
+
                   Dropdown {
                     id: sortPicker
                     // Habits are not sorted and a dashboard is not a list, so the
                     // control is not offered in either.
-                    visible: !widget.showingHabits && !widget.showingStats
+                    visible: !widget.showingHabits && !widget.showingStats && !widget.showingManagement && !widget.selecting
                     width: Math.min(Style.space(150), mainColumn.width * 0.42)
-                    label: "Sort"
+                    label: I18n.tr("Sort")
                     showLabel: false
                     options: [
-                      { value: "list", label: "Sort: List" },
-                      { value: "time", label: "Sort: Date" },
-                      { value: "priority", label: "Sort: Priority" },
-                      { value: "title", label: "Sort: Title" }
+                      { value: "list", label: I18n.tr("Sort: List") },
+                      { value: "time", label: I18n.tr("Sort: Date") },
+                      { value: "priority", label: I18n.tr("Sort: Priority") },
+                      { value: "title", label: I18n.tr("Sort: Title") }
                     ]
                     foreground: widget.foreground
                     fontFamily: widget.fontFamily
@@ -802,15 +922,15 @@ Panel {
                   Button {
                     // A task filter has nothing to say about habits, so the funnel
                     // stays out of the way there rather than filtering a list it cannot match.
-                    visible: !widget.showingHabits && !widget.showingStats
-                    text: "Filter"
+                    visible: !widget.showingHabits && !widget.showingStats && !widget.showingManagement && !widget.selecting
+                    text: I18n.tr("Filter")
                     bordered: true
                     selected: widget.filtering
                     foreground: widget.dim
                     fontFamily: widget.fontFamily
                     fontSize: Style.font.caption
                     verticalPadding: Style.spacing.xs
-                    tooltipText: "Priority and tag filters"
+                    tooltipText: I18n.tr("Priority and tag filters")
                     onClicked: widget.toggleFilters()
                   }
                 }
@@ -824,12 +944,12 @@ Panel {
               Flow {
                 id: filterBar
                 visible: tt.authed && widget.filtering && !widget.showingHabits
-                         && !widget.showingStats
+                         && !widget.showingStats && !widget.showingManagement
                 width: parent.width
                 spacing: Style.spacing.md
 
                 Text {
-                  text: "Filter"
+                  text: I18n.tr("Filter")
                   color: widget.dim
                   font.family: widget.fontFamily
                   font.pixelSize: Style.font.caption
@@ -838,14 +958,14 @@ Panel {
                 Dropdown {
                   id: priorityPicker
                   width: Style.space(150)
-                  label: "Priority"
+                  label: I18n.tr("Priority")
                   showLabel: false
                   options: [
-                    { value: "-1", label: "Any priority" },
-                    { value: "5", label: "High priority" },
-                    { value: "3", label: "Medium priority" },
-                    { value: "1", label: "Low priority" },
-                    { value: "0", label: "No priority" }
+                    { value: "-1", label: I18n.tr("Any priority") },
+                    { value: "5", label: I18n.tr("High priority") },
+                    { value: "3", label: I18n.tr("Medium priority") },
+                    { value: "1", label: I18n.tr("Low priority") },
+                    { value: "0", label: I18n.tr("No priority") }
                   ]
                   foreground: widget.foreground
                   fontFamily: widget.fontFamily
@@ -862,7 +982,7 @@ Panel {
                 Dropdown {
                   id: tagPicker
                   width: Math.min(filterBar.width, Style.space(150))
-                  label: "Tag"
+                  label: I18n.tr("Tag")
                   showLabel: false
                   options: widget.tagOptions
                   foreground: widget.foreground
@@ -937,6 +1057,10 @@ Panel {
                         fontFamily: widget.fontFamily
                         onHovered: function (isHovered) { if (isHovered) widget.setCursor(entry.index, false) }
                         onCheckinRequested: tt.checkInHabit(entry.modelData)
+                        onEditRequested: {
+                          widget.openTools("Edit habit",["habit"],null)
+                          managementPane.choose(entry.modelData)
+                        }
                       }
 
                       // ---- a task row
@@ -945,6 +1069,9 @@ Panel {
                         visible: !widget.showingHabits
                         width: parent.width
                         task: entry.modelData
+                        selectionMode:widget.selecting
+                        selected:widget.selectedTasks.indexOf(entry.rowId)>=0
+                        onSelectionRequested:widget.toggleSelection(entry.modelData)
                         expanded: widget.expandedId === entry.rowId
                         showProjectChip: widget.chipsUseful
                         showFocusAction: tt.showFocus
@@ -955,6 +1082,7 @@ Panel {
                         urgent: widget.urgent
                         onHovered: function (isHovered) { if (isHovered) widget.setCursor(entry.index, false) }
                         onFocusRequested: tt.startFocus(entry.modelData)
+                        onStopwatchRequested: tt.startStopwatch(entry.modelData)
                         onCompleteRequested: widget.completeAt(entry.modelData)
                         onDeleteRequested: widget.requestDelete(entry.modelData)
                         onExpandRequested: { widget.setCursor(entry.index); widget.toggleExpanded(entry.rowId) }
@@ -987,6 +1115,11 @@ Panel {
                           onTagsRequested: function (tags) { tt.setTags(entry.modelData, tags) }
                           onRepeatRequested: function (rule) { tt.setRepeat(entry.modelData, rule) }
                           onReminderRequested: function (spec) { tt.setReminder(entry.modelData, spec) }
+                          onCommentsRequested: {
+                            var task = entry.modelData
+                            widget.openTools("Task comments",["comment"],task)
+                          }
+                          onAssignmentRequested:widget.openTools("Task assignee",["assignment"],entry.modelData)
                           // An open dropdown or a focused field owns j/k/Enter; tell the key
                           // catcher to stand down for as long as that is true.
                           onEditingChanged: {
@@ -1018,6 +1151,7 @@ Panel {
               // Service.stats, fetched on entering the view.
               Flickable {
                 id: statsFlick
+                objectName: "statsFlick"
                 visible: tt.authed && widget.showingStats
                 width: parent.width
                 height: visible ? Math.max(0, mainColumn.height - paneHeader.implicitHeight
@@ -1026,6 +1160,9 @@ Panel {
                   - mainColumn.spacing * 3) : 0
                 contentWidth: width
                 contentHeight: statsPane.implicitHeight
+                function scrollBy(amount) {
+                  contentY = Math.max(0, Math.min(Math.max(0, contentHeight - height), contentY + amount))
+                }
                 clip: true
                 boundsBehavior: Flickable.StopAtBounds
                 flickableDirection: Flickable.VerticalFlick
@@ -1036,19 +1173,74 @@ Panel {
                   id: statsPane
                   width: statsFlick.width
                   stats: tt.stats
+                  loading: tt.statsLoading
+                  error: tt.statsError
+                  onRefreshRequested: tt.loadStats(true)
+                  onReturnToPanel: keyCatcher.forceActiveFocus()
                   foreground: widget.foreground
                   fontFamily: widget.fontFamily
                 }
               }
 
+              Flickable {
+                id: managementFlick
+                visible: tt.authed && widget.showingManagement && !widget.settingsHome
+                onVisibleChanged: if (visible) contentY=0
+                width: parent.width
+                height: visible ? Math.max(0, mainColumn.height - paneHeader.implicitHeight - paneRule.height
+                  - (statusLine.visible ? statusLine.implicitHeight + mainColumn.spacing : 0) - mainColumn.spacing * 3) : 0
+                contentWidth: width
+                contentHeight: managementPane.implicitHeight
+                clip: true
+                boundsBehavior: Flickable.StopAtBounds
+                ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+                ManagePane {
+                  id: managementPane
+                  width: parent.width
+                  service: tt
+                  contextual:true
+                  contextResources:widget.contextResources
+                  datesOnly: tt.view === "countdown"
+                  foreground: widget.foreground
+                  fontFamily: widget.fontFamily
+                  onDatesOnlyChanged: if (datesOnly) load()
+                  onEditingChanged: widget.detailPickerOpen = editing
+                  onReturnToPanel: { if (tt.view === "manage") widget.closeTools(); else keyCatcher.forceActiveFocus() }
+                }
+              }
+
+              Column {
+                visible: tt.authed && tt.view === "manage" && widget.settingsHome
+                width: parent.width
+                spacing: Style.spacing.sm
+                Button {
+                  objectName: "settingsAccount"
+                  text: I18n.tr("Account settings")
+                  width: parent.width
+                  leftAlign: true
+                  foreground: widget.foreground
+                  focusable: true
+                  onClicked: widget.openSettingsSection("Account settings",["preference","revoke"])
+                }
+                Button {
+                  objectName: "settingsLists"
+                  text: I18n.tr("List settings")
+                  width: parent.width
+                  leftAlign: true
+                  foreground: widget.foreground
+                  focusable: true
+                  onClicked: widget.openSettingsSection("List settings",["project","folder","tag","column"])
+                }
+              }
+
               Text {
                 id: emptyState
-                visible: tt.authed && tt.loaded && widget.rowCount === 0 && !widget.showingStats
+                visible: tt.authed && tt.loaded && widget.rowCount === 0 && !widget.showingStats && !widget.showingManagement
                 width: parent.width
-                text: widget.showingHabits ? "No habits set up. Add one in Dida365."
-                    : tt.search !== "" ? "Nothing matches “" + Model.elide(tt.search, 30) + "”"
-                    : (tt.priorityFilter >= 0 || tt.tagFilter !== "") ? "Nothing matches that filter"
-                    : tt.view === "completed" ? "Nothing finished recently"
+                text: widget.showingHabits ? I18n.tr("No habits yet. Choose Add habit to get started.")
+                    : tt.search !== "" ? I18n.tr("Nothing matches “") + Model.elide(tt.search, 30) + "”"
+                    : (tt.priorityFilter >= 0 || tt.tagFilter !== "") ? I18n.tr("Nothing matches that filter")
+                    : tt.view === "completed" ? I18n.tr("Nothing finished recently")
                     : "Nothing due. Enjoy it."
                 color: widget.dim
                 font.family: widget.fontFamily
@@ -1075,7 +1267,7 @@ Panel {
                 id: quickAddBar
                 // There is nothing to add to a dashboard, so the prompt goes with the
                 // list verbs: out of the way until you are back on a task view.
-                visible: !widget.showingStats
+                visible: !widget.showingStats && !widget.showingManagement
                 width: parent.width
                 implicitHeight: widget.adding ? quickAdd.implicitHeight : addPrompt.implicitHeight
                 height: visible ? implicitHeight : 0
@@ -1085,7 +1277,7 @@ Panel {
                   visible: !widget.adding
                   leftAlign: true
                   width: parent.width
-                  text: "＋  Add a task…"
+                  text: I18n.tr("＋  Add a task…")
                   bordered: false
                   foreground: widget.dim
                   fontFamily: widget.fontFamily
@@ -1139,7 +1331,7 @@ Panel {
 
           Text {
             width: parent.width
-            text: "Connect your TickTick account to see your tasks here."
+            text: I18n.tr("Connect your TickTick account to see your tasks here.")
             color: widget.dim
             font.family: widget.fontFamily
             font.pixelSize: Style.font.bodySmall
@@ -1152,7 +1344,7 @@ Panel {
           // and it waits on a redirect back to localhost.
           Button {
             width: parent.width
-            text: "Sign in with browser"
+            text: I18n.tr("Sign in with browser")
             bordered: true
             foreground: widget.foreground
             fontFamily: widget.fontFamily
@@ -1174,7 +1366,7 @@ Panel {
           Button {
             visible: !widget.pastingToken
             width: parent.width
-            text: "Paste an API token instead"
+            text: I18n.tr("Paste an API token instead")
             bordered: false
             foreground: widget.dim
             fontFamily: widget.fontFamily
@@ -1188,7 +1380,7 @@ Panel {
           Text {
             visible: widget.pastingToken
             width: parent.width
-            text: "In the TickTick web app: avatar → Settings → Account → API Token."
+            text: I18n.tr("In the TickTick web app: avatar → Settings → Account → API Token.")
             color: widget.dim
             font.family: widget.fontFamily
             font.pixelSize: Style.font.caption
@@ -1201,7 +1393,7 @@ Panel {
             width: parent.width
             enabled: !tt.authBusy
             password: true
-            placeholderText: tt.authBusy ? "Checking…" : "API token"
+            placeholderText: tt.authBusy ? I18n.tr("Checking…") : I18n.tr("API token")
             foreground: widget.foreground
             font.family: widget.fontFamily
             onAccepted: {
@@ -1213,7 +1405,7 @@ Panel {
           Button {
             visible: widget.pastingToken
             width: parent.width
-            text: tt.authBusy ? "Connecting…" : "Connect"
+            text: tt.authBusy ? I18n.tr("Connecting…") : I18n.tr("Connect")
             bordered: true
             foreground: widget.foreground
             fontFamily: widget.fontFamily
@@ -1231,7 +1423,7 @@ Panel {
         z: 10
         opened: widget.confirmOpen
         message: widget.confirmTask
-          ? "Delete “" + Model.elide(widget.confirmTask.title, 42) + "”?\nThis cannot be undone."
+          ? I18n.tr("Delete “") + Model.elide(widget.confirmTask.title, 42) + I18n.tr("”?\nThis cannot be undone.")
           : ""
         confirmText: "Delete"
         cancelText: "Keep"

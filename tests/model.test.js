@@ -19,9 +19,9 @@ const vm = require("node:vm")
 
 function loadModel() {
   const file = path.join(__dirname, "..", "qml", "Model.js")
-  const src = fs.readFileSync(file, "utf8").replace(/^\s*\.pragma\s+library\s*$/m, "")
+  const src = fs.readFileSync(file, "utf8").replace(/^\s*\.(?:pragma|import).*$/gm, "")
   // `Qt` is only touched by the colour helpers, which are not under test here.
-  const sandbox = { module: { exports: {} }, Qt: undefined }
+  const sandbox = { module: { exports: {} }, Qt: {locale: () => ({name:"en_US"})}, I18n: {tr: text => text, isChinese: () => false} }
   vm.runInNewContext(src, sandbox, { filename: file })
   return sandbox.module.exports
 }
@@ -287,4 +287,3 @@ test("pieSlices survives empty or missing inputs", () => {
   assert.deepStrictEqual(plain(Model.pieSlices(undefined, 0)), [])
   assert.deepStrictEqual(plain(Model.pieSlices([{ count: 0 }], 0)), [])
 })
-

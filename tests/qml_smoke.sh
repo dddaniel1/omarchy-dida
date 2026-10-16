@@ -171,6 +171,23 @@ ShellRoot {
         if (nav) {
           subject.setView("tomorrow")
           console.log("SMOKE navTracks=" + (nav.currentView === "tomorrow"))
+          var orderMatches = true
+          for (var mask = 0; mask < 4; mask++) {
+            nav.showHabits = Boolean(mask & 1)
+            nav.showStats = Boolean(mask & 2)
+            var displayed = []
+            for (var ni = 0; ni < nav.navItems.length; ni++) {
+              var row=nav.navItems[ni]
+              if (row.kind === "view" && row.shortcut) {
+                displayed.push(row.value)
+                orderMatches = orderMatches && subject.views[Number(row.shortcut)-1] === row.value
+              }
+            }
+            orderMatches = orderMatches && displayed.slice(0,4).join(",") === "today,inbox,next,all"
+          }
+          nav.showHabits = Qt.binding(function() { return subject.service.showHabits })
+          nav.showStats = Qt.binding(function() { return subject.service.showStats })
+          console.log("SMOKE shortcutOrder=" + orderMatches)
           nav.viewSelected("inbox")
           console.log("SMOKE navSelect=" + subject.service.view)
           // The keyboard cursor walks the flat model and never lands on a header.
@@ -242,14 +259,11 @@ ShellRoot {
         }
         console.log("SMOKE note=" + (note ? note.title : "none"))
         if (note) subject.completeAt(note)
-        // A finished task must refuse to be completed twice. The Done view paints it
-        // with this same delegate, so Enter and the checkbox both reach here, and the
-        // Open API cannot undo it — dropping the row would report a change that the
-        // next refresh puts straight back.
+        // Restoration waits for server verification; do not optimistically drop it.
         var kept = subject.rowCount
-        subject.service.complete({ id: "smoke-done", title: "already finished", status: 2 })
+        subject.service.complete({ id: "smoke-done", projectId: "p-work", title: "already finished", status: 2 })
         console.log("SMOKE donekept=" + (subject.rowCount === kept)
-                    + " status=" + subject.service.actionStatus)
+                    + " restoring=" + (subject.service.actionStatus === "Restoring already finished" || subject.service.actionStatus === "正在恢复：already finished"))
         subject.dismiss()
         console.log("SMOKE done rows=" + subject.rowCount + " sort=" + subject.service.sort)
         // The Stats view is a dashboard, not a list. Hold on it for a beat so its
@@ -269,7 +283,78 @@ ShellRoot {
       console.log("SMOKE stats view=" + subject.service.view
                   + " days=" + s.days + " trend=" + ((s.trend || []).length)
                   + " lists=" + ((dist.byList || []).length))
+      function findItem(item, name) {
+        if (item.objectName === name) return item
+        var children = item.children || []
+        for (var i = 0; i < children.length; i++) {
+          var found = findItem(children[i], name)
+          if (found) return found
+        }
+        return null
+      }
+      var pane = findItem(subject.panel.contentItem[0], "statsPane")
+      var settingsReturn=subject.service.view
+      subject.showSettings()
+      var settingsAccount=findItem(subject.panel.contentItem[0],"settingsAccount")
+      var settingsLists=findItem(subject.panel.contentItem[0],"settingsLists")
+      var settingsOk=subject.settingsHome && settingsAccount && settingsLists
+      settingsAccount.clicked()
+      settingsOk=settingsOk && subject.settingsSection && subject.contextTitle==="Account settings"
+      subject.closeTools()
+      settingsOk=settingsOk && subject.settingsHome
+      settingsLists.clicked()
+      settingsOk=settingsOk && subject.settingsSection && subject.contextResources.indexOf("folder")>=0
+      subject.closeTools(); subject.closeTools()
+      console.log("SMOKE settingsNavigation="+(settingsOk && subject.service.view===settingsReturn))
+      var navLayout=findItem(subject.panel.contentItem[0],"sidebar")
+      var settingsLayout=findItem(subject.panel.contentItem[0],"sidebarSettings")
+      if (navLayout && settingsLayout) {
+        var settingsPoint=settingsLayout.mapToItem(navLayout,0,0)
+        var done=navLayout.navItems.filter(function(item){return item.value==="completed"})
+        var wrappers=navLayout.navItems.filter(function(item){return item.section==="lists" || item.section==="more"})
+        console.log("SMOKE sidebarLayout="+(done.length===1 && wrappers.length===0 && settingsPoint.y>=0 && settingsPoint.y+settingsLayout.height<=navLayout.height+1))
+      }
+      var flick = findItem(subject.panel.contentItem[0], "statsFlick")
+      if (pane && flick) {
+        subject.open()
+        flick.scrollBy(100)
+        var scrolled = flick.contentY > 0
+        pane.inspectCalendar()
+        var focused = pane.calendarFocus
+        pane.releaseCalendar()
+        var days = []
+        for (var d = 0; d < 90; d++) days.push({date: "2026-10-01", count: 1})
+        pane.stats = {summary: {open: 0}, days: 90, trend: days}
+        console.log("SMOKE statsAccess=" + (scrolled && focused && !pane.calendarFocus)
+                    + " grouped=" + pane.trend.length)
+      }
       subject.setView("today")
+      var management = findItem(subject.panel.contentItem[0], "managementPane")
+      if (management) {
+        var noManage=subject.views.indexOf("manage")<0
+        subject.setView("habits")
+        subject.openTools("New habit",["habit"],null)
+        console.log("SMOKE contextualHabit="+(noManage && management.contextual && management.resource==="habit" && management.contextResources.length===1))
+        subject.closeTools()
+        console.log("SMOKE contextualReturn="+(subject.service.view==="habits"))
+        subject.openTools("New habit",["habit"],null)
+        subject.openTools("Account settings",["preference","revoke"],null)
+        subject.closeTools()
+        console.log("SMOKE contextualNested="+(subject.service.view==="habits"))
+        subject.setView("today")
+        subject.selectedTasks=["t-selected"]
+        subject.openTools("Selected tasks",["batch"],{projectId:"p-work",id:"t-selected"})
+        console.log("SMOKE contextualBulk="+(management.selectedIds.length===1 && management.selectedIds[0]==="t-selected"))
+        subject.closeTools()
+        subject.selecting=true;subject.selectedTasks=["old-selection"]
+        subject.openProject("p-home")
+        console.log("SMOKE contextualSelectionReset="+(!subject.selecting && subject.selectedTasks.length===0))
+        subject.setView("manage")
+        management.resource = "batch"
+        subject.setView("countdown")
+        console.log("SMOKE management=" + (management.resource === "countdown" && subject.rowCount === 0))
+        subject.setView("today")
+      }
       focusProbe.running = true
       quitTimer.running = true
     }
@@ -311,8 +396,17 @@ ShellRoot {
         console.log("SMOKE focusPausedKept=" + (s.focusPaused && s.focusState.taskId === task.id
           && s.focusState.taskTitle === task.title))
         s.stopFocus()
-      } else {
+      } else if (step === 3) {
         console.log("SMOKE focusStopped=" + (!s.focusActive && s.focusState.taskTitle === ""))
+        s.startStopwatch(task)
+      } else if (step === 4) {
+        console.log("SMOKE stopwatchLinked=" + (s.focusTiming && s.focusActive && s.focusState.taskId === task.id && s.focusState.taskTitle === task.title))
+        s.pauseFocus()
+      } else if (step === 5) {
+        s.startStopwatch({id:"other",title:"Other"})
+        console.log("SMOKE stopwatchKept=" + (s.focusPaused && s.focusState.taskId === task.id))
+        s.stopFocus()
+      } else {
         Qt.quit()
       }
       step += 1
@@ -345,10 +439,15 @@ fi
 
 # Today = overdue + today: "Renew domain", "Submit report", "Call the bank", plus the
 # note that is also due today. Tomorrow's and the undated one are correctly excluded.
-for marker in focusLinked focusKept focusPausedKept focusStopped; do
+for marker in focusLinked focusKept focusPausedKept focusStopped stopwatchLinked stopwatchKept settingsNavigation; do
   grep -q "SMOKE $marker=true" "$WORK/clean.log" || fail "focus association check failed: $marker"
 done
+for marker in contextualHabit contextualReturn contextualBulk contextualNested contextualSelectionReset; do
+  grep -q "SMOKE $marker=true" "$WORK/clean.log" || fail "contextual workflow failed: $marker"
+done
 grep -q "SMOKE navTracks=true" "$WORK/clean.log" || fail "the sidebar stopped tracking the view"
+grep -q "SMOKE sidebarLayout=true" "$WORK/clean.log" || fail "sidebar settings overflow or Lists entry missing"
+grep -q "SMOKE shortcutOrder=true" "$WORK/clean.log" || fail "number shortcuts differ from sidebar order"
 grep -q "SMOKE navSelect=inbox" "$WORK/clean.log" || fail "selecting a sidebar item did not change the view"
 grep -q "SMOKE sidebarCursor=sidebar:ok" "$WORK/clean.log" || fail "the sidebar keyboard cursor did not land on a row"
 grep -q "SMOKE preview=true" "$WORK/clean.log" || fail "moving the sidebar cursor did not preview the list"
@@ -358,6 +457,8 @@ grep -q "SMOKE habitTaskView=all" "$WORK/clean.log" || fail "habit view reached 
 # window, and the open work grouped by list — not merely exist in the view list.
 grep -q "SMOKE stats view=stats days=7 trend=7 lists=3" "$WORK/clean.log" \
   || { cat "$WORK/clean.log"; fail "the Stats view did not render its dashboard"; }
+grep -q "SMOKE statsAccess=true grouped=13" "$WORK/clean.log" \
+  || { cat "$WORK/clean.log"; fail "statistics scrolling, calendar focus or long-range aggregation failed"; }
 grep -q "SMOKE rows=4" "$WORK/clean.log" \
   || { cat "$WORK/clean.log"; fail "expected 4 rows (1 overdue + 2 today + 1 note) in Today"; }
 # …but the badge counts only the three real tasks. A note has no checkbox, so
@@ -377,7 +478,7 @@ grep -q "SMOKE done .* sort=list" "$WORK/clean.log" \
   || fail "cycling the sort four times did not return to where it started"
 grep -q "SMOKE confirmOpen=true" "$WORK/clean.log" \
   || fail "the delete confirmation never opened"
-grep -q "SMOKE donekept=true status=Already done" "$WORK/clean.log" \
+grep -q "SMOKE donekept=true restoring=true" "$WORK/clean.log" \
   || { cat "$WORK/clean.log"; fail "a finished task was completed again"; }
 grep -q "SMOKE settings hideWhenEmpty=false showProjectChips=true confirmDelete=true" \
   "$WORK/clean.log" || fail "string settings were not coerced to booleans"

@@ -1,4 +1,5 @@
 import QtQuick
+import "I18n.js" as I18n
 import Quickshell.Io
 import qs.Commons
 import "Model.js" as Model
@@ -17,6 +18,29 @@ Item {
   property var projects: []
   property var groups: []
   property var tags: []
+  property int countdownCount: 0
+  function loadCountdownCount() {
+    if (!countdownProcess.running) countdownProcess.running = true
+  }
+  property var management: ({})
+  property string managementError: ""
+  readonly property bool managementBusy: managementProcess.running
+  property var _managementQueue: []
+  property int managementScope: 0
+
+  function manage(args) {
+    _managementQueue.push({args:args, scope:managementScope})
+    pumpManagement()
+  }
+
+  function pumpManagement() {
+    if (managementProcess.running || _managementQueue.length === 0) return
+    managementError = ""
+    var next = _managementQueue.shift()
+    managementProcess.scope = next.scope
+    managementProcess.command = ["python3", helperPath, "manage"].concat(next.args)
+    managementProcess.running = true
+  }
   // Habits are a second endpoint with their own cache clock, so they get their own
   // properties and their own process rather than riding the task read.
   property var habits: []
@@ -25,6 +49,8 @@ Item {
   // Statistics: a third read with its own clock. A dashboard over finished work, habits
   // and focus, fetched only while the Stats view is open rather than on every poll.
   property var stats: ({})
+  readonly property bool statsLoading: statsProcess.running
+  property string statsError: ""
   // The focus timer. `focusEndsAt` is an absolute deadline in epoch ms, which is what
   // lets the countdown survive a reload and stay identical on every monitor: each
   // surface ticks locally against the same instant the CLI wrote down.
@@ -83,9 +109,11 @@ Item {
     return Math.max(0, Number((habitCounts || {}).remaining || 0))
   }
 
+  readonly property bool focusTiming: focusState.phase === "timing"
   readonly property bool focusRunning: focusEndsAt > 0
   readonly property int focusSecondsLeft: focusRunning
-    ? Model.focusRemaining(focusEndsAt, focusTickMs)
+    ? (focusTiming ? Math.max(0, Math.floor((focusTickMs - Number(focusState.startedAt || 0)) / 1000)
+        - Number(focusState.pauseSeconds || 0)) : Model.focusRemaining(focusEndsAt, focusTickMs))
     : Math.max(0, focusPausedLeft)
   readonly property string focusClockText: (focusRunning || focusPaused)
     ? Model.focusClock(focusSecondsLeft)
@@ -166,6 +194,7 @@ Item {
     if (value === "completed" || value === "done") return "completed"
     if (value === "habits" || value === "habit") return "habits"
     if (value === "stats" || value === "statistics") return "stats"
+    if (value === "manage" || value === "countdown") return value
     if (value === "all") return "all"
     return "today"
   }
@@ -204,7 +233,7 @@ Item {
       return done
     }
     // Keep the task cache current behind habits and the unscoped list picker.
-    var effective = view === "habits" || view === "stats"
+    var effective = view === "habits" || view === "stats" || view === "manage" || view === "countdown"
       || (view === "project" && projectFilter === "") ? "all" : view
     var args = ["tasks", "--view", effective, "--days", String(upcomingDays),
                 "--sort", sort]
@@ -228,7 +257,7 @@ Item {
     var order = ["list", "time", "priority", "title"]
     var at = order.indexOf(sort)
     setSort(order[(at < 0 ? 0 : at + 1) % order.length])
-    toast("Sorted by " + sortLabel())
+    toast(I18n.tr("Sorted by ") + I18n.tr(sortLabel()))
   }
 
   // What the UI should section on. The Done view comes from a different command with
@@ -287,19 +316,16 @@ Item {
     if (!row || refuseDraft(row)) return
     if (Model.isNote(row)) {
       // TickTick has no way to finish a note, and the API would reject it.
-      toast("Notes cannot be completed")
+      toast(I18n.tr("Notes cannot be completed"))
       return
     }
     if (Model.isDone(row)) {
-      // The Done view paints finished work with the same delegate, so Enter on a row
-      // there lands here. Completing it again would drop it from the list and report
-      // a change that never happened — and the Open API cannot undo it either, since
-      // a closed task cannot be looked up at all.
-      toast("Already done")
+      toast(I18n.tr("Restoring ") + Model.elide(row.title, 40))
+      enqueue(["uncomplete", row.id].concat(scopeArgs(row)))
       return
     }
     dropTask(row.id)
-    toast("Completed " + Model.elide(row.title, 40))
+    toast(I18n.tr("Completed ") + Model.elide(row.title, 40))
     enqueue(["complete", row.id].concat(scopeArgs(row)))
   }
 
@@ -307,7 +333,7 @@ Item {
     var row = taskRow(task)
     if (!row || refuseDraft(row)) return
     dropTask(row.id)
-    toast("Deleted " + Model.elide(row.title, 40))
+    toast(I18n.tr("Deleted ") + Model.elide(row.title, 40))
     enqueue(["delete", row.id].concat(scopeArgs(row), ["--yes"]))
   }
 
@@ -426,7 +452,7 @@ Item {
     if (target === "" || target === row.projectId) return
     var meta = projectById(target)
     patchTask(row.id, { projectId: target, project: meta.name, projectColor: meta.color })
-    toast("Moved to " + (meta.name || target))
+    toast(I18n.tr("Moved to ") + (meta.name || target))
     enqueue(["edit", row.id].concat(scopeArgs(row), ["--move-to", target]))
   }
 
@@ -449,7 +475,7 @@ Item {
       args.push("--clear-due")
     } else {
       patchTask(row.id, { dueLabel: text, pending: true })
-      toast("Due " + Model.elide(text, 40))
+      toast(I18n.tr("Due ") + Model.elide(text, 40))
       args = args.concat(["--due", text])
     }
     enqueue(args)
@@ -461,7 +487,7 @@ Item {
     var text = Model.squish(when)
     if (text === "") return
     patchTask(row.id, { startLabel: text, pending: true })
-    toast("Starts " + Model.elide(text, 40))
+    toast(I18n.tr("Starts ") + Model.elide(text, 40))
     enqueue(["edit", row.id].concat(scopeArgs(row), ["--start", text]))
   }
 
@@ -489,7 +515,7 @@ Item {
       toast("No longer repeats")
       args.push("--clear-repeat")
     } else {
-      toast("Repeats " + text)
+      toast(I18n.tr("Repeats ") + text)
       args = args.concat(["--repeat", text])
     }
     enqueue(args)
@@ -505,7 +531,7 @@ Item {
       toast("Reminder cleared")
       args.push("--clear-remind")
     } else {
-      toast("Reminder " + text)
+      toast(I18n.tr("Reminder ") + text)
       args = args.concat(["--remind", text])
     }
     enqueue(args)
@@ -540,7 +566,7 @@ Item {
     var items = (row.items || []).slice()
     items.push({ id: "local-pending-" + items.length, title: text, done: false })
     patchTask(row.id, { items: items, itemsTotal: items.length })
-    toast("Added " + Model.elide(text, 40))
+    toast(I18n.tr("Added ") + Model.elide(text, 40))
     enqueue(["item", "add", row.id, text].concat(scopeArgs(row)))
   }
 
@@ -657,15 +683,20 @@ Item {
   // Stats, read on entering the Stats view. Their own process, on their own clock: a
   // stats read is a completed-task window plus the cached task, habit and focus reads,
   // and it must never delay a poll or a click. The window matches the Done view's.
-  function loadStats() {
+  function loadStats(force) {
     if (statsProcess.running || !showStats) return
+    statsError = ""
     statsProcess.command = ["python3", helperPath, "stats", "--days", String(completedDays)]
+    if (force === true) statsProcess.command = statsProcess.command.concat(["--refresh"])
     statsProcess.running = true
   }
 
   function applyStats(payload) {
     var body = root.bodyOf(payload)
-    if (Util.isPlainObject(body)) root.stats = body
+    if (Util.isPlainObject(body)) {
+      root.stats = body
+      root.statsError = Model.squish(body.warning)
+    }
   }
 
   // Tick a habit off now, and let the helper have the last word. The day's state is
@@ -719,10 +750,11 @@ Item {
   // The durations travel as flags because widget settings are not visible to a CLI
   // process. They are only meaningful on `start`, which is where the helper writes
   // them into the block; every later transition reads them back from the file.
-  function focusAction(name, task) {
+  function focusAction(name, task, timing) {
     if (focusProcess.running) return
     var args = ["focus", name]
     if (name === "start") {
+      if (timing === true) args = args.concat(["--phase", "timing"])
       args = args.concat([
         "--focus-minutes", String(focusMinutes),
         "--short-break", String(shortBreakMinutes),
@@ -745,6 +777,12 @@ Item {
     focusAction("start", task)
   }
   function pauseFocus() { focusAction("pause") }
+  function startStopwatch(task) {
+    if (focusActive) return
+    if (task && (!task.id || String(task.id).indexOf("local-draft-") === 0
+        || Model.isNote(task) || Model.isDone(task))) return
+    focusAction("start", task || null, true)
+  }
   function resumeFocus() { focusAction("resume") }
   function stopFocus() { focusAction("stop") }
   // Called by the countdown when the deadline passes, and by nobody else. A call that
@@ -855,7 +893,7 @@ Item {
   }
 
   function toast(text) {
-    actionStatus = Model.elide(text, 80)
+    actionStatus = Model.elide(I18n.tr(text), 80)
     toastTimer.restart()
   }
 
@@ -883,6 +921,7 @@ Item {
     var payload = payloadOf(stdout)
     if (payload && payload.ok === true) {
       var body = bodyOf(payload)
+      if (!authed) root.loadCountdownCount()
       // Stale-while-revalidating: only a good payload is allowed to replace what
       // is on screen, so a failed poll never blanks the list.
       if (Array.isArray(body.tasks)) tasks = body.tasks
@@ -913,6 +952,7 @@ Item {
       // saying nothing would leave the user believing a task exists that does not.
       var warning = Model.squish(payload.warning)
       if (warning !== "") toast(warning)
+      else if (payload.completed === false) toast(I18n.tr("Restored to unfinished"))
       return
     }
     var message = messageOf(payload, stderr, "TickTick command failed")
@@ -946,6 +986,23 @@ Item {
     // And so is the habit count: it is on the bar badge from the first frame, so it
     // cannot wait for someone to open the Habits view or for the slow poll to come round.
     root.loadHabits()
+    root.loadCountdownCount()
+  }
+
+  Timer {
+    interval: root.refreshIntervalSec * 1000
+    repeat: true
+    running: root.authed
+    onTriggered: root.loadCountdownCount()
+  }
+  Process {
+    id: countdownProcess
+    command: ["python3", root.helperPath, "manage", "countdown", "list"]
+    stdout: StdioCollector { id: countdownOut; waitForEnd: true }
+    onExited: {
+      var payload = root.payloadOf(countdownOut.text)
+      if (payload.ok === true && Array.isArray(payload.result)) root.countdownCount = payload.result.length
+    }
   }
 
   Timer {
@@ -968,7 +1025,7 @@ Item {
     running: root.focusRunning
     onTriggered: {
       root.focusTickMs = Date.now()
-      if (Model.focusSettled(root.focusEndsAt, root.focusTickMs)) root.completeFocus()
+      if (!root.focusTiming && Model.focusSettled(root.focusEndsAt, root.focusTickMs)) root.completeFocus()
     }
   }
 
@@ -1045,6 +1102,34 @@ Item {
       } else {
         root.refresh()
       }
+    }
+  }
+
+  Process {
+    id: managementProcess
+    property int scope: 0
+    stdout: StdioCollector { id: managementOut; waitForEnd: true }
+    stderr: StdioCollector { id: managementErr; waitForEnd: true }
+    onExited: {
+      var payload = root.payloadOf(managementOut.text)
+      var currentScope = scope === root.managementScope
+      if (payload.ok === true) {
+        if (currentScope) {
+          root.management = payload
+          root.managementError = String(payload.warning || "")
+        }
+        if (payload.action !== "list" && payload.action !== "get") {
+          root.toast(payload.warning || "Saved")
+          if (payload.resource === "revoke") root.authed = false
+          else { root.refresh(); root.loadHabits(); root.loadTags() }
+        }
+      } else {
+        var message = root.messageOf(payload, managementErr.text, "Could not load. Try again.")
+        if (currentScope) root.managementError = message
+        else if (managementProcess.command[4] !== "list" && managementProcess.command[4] !== "get") root.toast(message)
+        if (payload.error === "auth") root.authed=false
+      }
+      Qt.callLater(root.pumpManagement)
     }
   }
 
@@ -1157,7 +1242,7 @@ Item {
     onExited: function () {
       var payload = root.payloadOf(String(statsOut.text || ""))
       if (payload && payload.ok === true) root.applyStats(payload)
-      else if (payload && payload.message) root.errorText = String(payload.message)
+      else root.statsError = root.messageOf(payload, "", "Statistics could not be loaded. Refresh to try again.")
     }
   }
 

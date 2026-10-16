@@ -94,6 +94,29 @@ want, and this table becomes "Omarchy 4.0 or newer" with nothing else to think a
 
 ## Install
 
+### Install or package a local checkout
+
+```bash
+./scripts/install.sh          # Validate, copy this working tree, reload and enable
+bash scripts/package.sh      # Create dist/dddaniel1.dida365-1.0.3.tar.gz
+```
+
+To install the archive on another Omarchy 4 machine:
+
+```bash
+tar -xzf dist/dddaniel1.dida365-1.0.3.tar.gz
+cd dddaniel1.dida365
+./scripts/install.sh
+```
+
+The archive includes the Python helper and installer; no compilation or pip packages
+are needed. Installation requires `python3`, `jq`, `rsync` and Omarchy 4. Use
+`./scripts/install.sh --link` for live development, or `--no-reload` to copy files
+without enabling the widget. Local snapshot installs are updated by running the
+installer again; `omarchy plugin update` is for git installs.
+
+### Install from GitHub
+
 **1 — add the plugin.**
 
 ```bash
@@ -187,13 +210,18 @@ ticktick login --api-base https://api.ticktick.com/open/v1
 
 ## Using it
 
+The sidebar offers **Dates** for important dates. Add/edit habits in Habits, open
+comments from task details, and select tasks for bulk actions. Lists and Settings
+hold organization and account tools. The focus area includes a stopwatch and history.
+See [additional API features and CLI examples](docs/API-FEATURES.md).
+
 ### Mouse
 
 | Where | Action |
 |---|---|
 | Bar button | left = popup · right = refresh now · middle = jump to quick-add |
 | Task row | click the checkbox = complete · click the title = expand detail |
-| Finished row | ticked and struck through, dated by when you finished it; nothing to click, because TickTick's API cannot reopen it |
+| Finished row | ticked and struck through, dated by completion; click its checkbox again to restore it to unfinished (requires a connection, preserves the task fields and verifies server state) |
 | Expanded detail | tick a subtask · remove one with the ✕ that appears · pick a list, repeat or reminder |
 | Note row | opens like any other; it has no checkbox, because a note is not a task |
 
@@ -207,7 +235,7 @@ The popup is fully keyboard-driven — the mouse is optional.
 | <kbd>Enter</kbd> | complete the task under the cursor |
 | <kbd>Space</kbd> | expand / collapse its detail |
 | <kbd>←</kbd> <kbd>→</kbd> / <kbd>Tab</kbd> | switch view |
-| <kbd>1</kbd>–<kbd>8</kbd> | jump to a view — Today, Tomorrow, Next 7, Inbox, All, Habits, Stats, Done; the digits follow the sidebar, so hiding Habits or Stats drops them out |
+| <kbd>1</kbd>–<kbd>8</kbd> | jump to a view — Today, Tomorrow, Next 7, Inbox, All, Done, Habits, Stats; the digits follow the sidebar, so hiding Habits or Stats drops them out |
 | <kbd>a</kbd> | quick-add |
 | <kbd>/</kbd> | search |
 | <kbd>o</kbd> | cycle sort — list, date, priority, title (this also sets the headings) |
@@ -255,6 +283,11 @@ the account counts pomodoros, and banking half a block or a break would inflate 
 statistic it shows on every device. Durations come from the settings below; the account
 has no focus settings of its own to defer to.
 
+The strip shows what the block is doing — its phase, whether it is paused, the linked
+task, and today's tally — only while one is running, and idle it is just a Start button.
+The durations in force ride that button's tooltip rather than sitting under the timer as
+a permanent readout.
+
 The task's name appears beneath the timer and stays there when changing views or
 restarting the shell. Task start buttons are disabled while a timer is running or
 paused, and unavailable on notes, completed tasks or unsynced drafts. A completed
@@ -267,23 +300,24 @@ restart. It also means the countdown is not lost when the panel closes.
 ### Statistics
 
 The **Stats** view is a read-only dashboard assembled from everything the widget already
-knows. It never takes the keyboard cursor, because a statistic is not something to act
-on.
+knows. Use ↑/↓ or j/k to scroll, Page Up/Down to move a page, and Home/End to jump.
+Press Tab to inspect heatmap dates with the arrow keys; Esc returns to the panel.
 
 - **Completed** — a bar per day over the **Done** window (`completedDays`), from the one
-  endpoint that can see finished work.
-- **Activity heatmap** — a 5-week calendar-aligned activity grid (weeks × 7 days) showing
-  daily completion frequency and intensity.
-- **Open work** — a donut chart of the outstanding tasks by list, beside a matching bar
-  breakdown that labels each list's share, a priority chip row and a tag breakdown, all
-  read from the same rows the task pane renders.
+  endpoint that can see finished work. Periods over fourteen days are grouped by week.
+- **Activity heatmap** — five columns of weeks with seven weekday cells each, showing
+  daily completion intensity with explicit 0 / 1 / 2–3 / 4+ levels. Its full history
+  is fetched independently of the trend window.
+- **Open work** — list, priority and tag bars based on all outstanding tasks. List
+  percentages match bar lengths, full names wrap, and tasks with several tags count
+  toward each tag.
 - **Habits and focus** — the day's check-in tally, the best current streak, and how many
   pomodoros and minutes were logged today.
 
 It is fetched on demand — entering the view is what asks for it — so nothing rides the
-poll, and every section degrades on its own: one the account could not answer is hidden
-rather than drawn empty. `showStats` turns the view, its sidebar entry and its number key
-off together.
+poll. Refresh (or r/s) updates statistics; update time, cached task data and partial
+warnings are shown. Missing completion history appears as unavailable, not zero.
+`showStats` turns the view, its sidebar entry and its number key off together.
 
 ### Notes vs tasks
 
@@ -552,8 +586,8 @@ These are TickTick's, not the plugin's:
 plugin is discovered and enabled:
 
 ```bash
-omarchy plugin list | grep ticktick
-omarchy plugin rescan
+omarchy plugin list | grep dida365
+omarchy-shell shell rescanPlugins
 ```
 
 **The count is 0 but I have tasks.** Ask the helper directly:

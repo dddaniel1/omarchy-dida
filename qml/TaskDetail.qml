@@ -1,4 +1,6 @@
 import QtQuick
+import "." as Local
+import "I18n.js" as I18n
 import qs.Commons
 import qs.Ui
 import "Model.js" as Model
@@ -25,10 +27,13 @@ Item {
   signal tagsRequested(string tags)
   signal repeatRequested(string rule)
   signal reminderRequested(string spec)
+  signal commentsRequested()
+  signal assignmentRequested()
 
   // The panel freezes its key catcher on this: while a dropdown popup is open or a
   // field here has focus, j/k/Enter belong to this pane and not to the row cursor.
   readonly property bool editing: projectPicker.popupOpen || repeatPicker.popupOpen
+    || dueCalendar.opened || startCalendar.opened
     || remindPicker.popupOpen || dueField.activeFocus || startField.activeFocus
     || tagsField.activeFocus || itemField.activeFocus
 
@@ -46,21 +51,21 @@ Item {
   // RRULE belongs in the quick-add text, not behind a dropdown that would have to
   // round-trip one it cannot spell.
   readonly property var repeatOptions: [
-    { value: "", label: "Does not repeat" },
-    { value: "daily", label: "Daily" },
-    { value: "weekly", label: "Weekly" },
-    { value: "monthly", label: "Monthly" },
-    { value: "yearly", label: "Yearly" }
+    { value: "", label: I18n.tr("Does not repeat") },
+    { value: "daily", label: I18n.tr("Daily") },
+    { value: "weekly", label: I18n.tr("Weekly") },
+    { value: "monthly", label: I18n.tr("Monthly") },
+    { value: "yearly", label: I18n.tr("Yearly") }
   ]
 
   readonly property var reminderOptions: [
-    { value: "", label: "No reminder" },
-    { value: "on time", label: "At the time" },
-    { value: "5m", label: "5 minutes before" },
-    { value: "15m", label: "15 minutes before" },
-    { value: "30m", label: "30 minutes before" },
-    { value: "1h", label: "1 hour before" },
-    { value: "1d", label: "1 day before" }
+    { value: "", label: I18n.tr("No reminder") },
+    { value: "on time", label: I18n.tr("At the time") },
+    { value: "5m", label: I18n.tr("5 minutes before") },
+    { value: "15m", label: I18n.tr("15 minutes before") },
+    { value: "30m", label: I18n.tr("30 minutes before") },
+    { value: "1h", label: I18n.tr("1 hour before") },
+    { value: "1d", label: I18n.tr("1 day before") }
   ]
 
   // Which preset the task currently matches, or "" when it is something we did not
@@ -89,7 +94,9 @@ Item {
     "15 min before": "15m",
     "30 min before": "30m",
     "1 hour before": "1h",
-    "1 day before": "1d"
+    "1 day before": "1d",
+    "准时": "on time", "提前 5 分钟": "5m", "提前 15 分钟": "15m",
+    "提前 30 分钟": "30m", "提前 1 小时": "1h", "提前 1 天": "1d"
   })
 
   readonly property string reminderValue: {
@@ -123,8 +130,8 @@ Item {
     var parts = []
     var created = stamp(row.createdTime || row.created)
     var modified = stamp(row.modifiedTime || row.modified)
-    if (created !== "") parts.push("Created " + created)
-    if (modified !== "") parts.push("Modified " + modified)
+    if (created !== "") parts.push(I18n.tr("Created ") + I18n.dateLabel(created))
+    if (modified !== "") parts.push(I18n.tr("Modified ") + I18n.dateLabel(modified))
     return parts.join(" · ")
   }
 
@@ -159,6 +166,19 @@ Item {
     anchors.leftMargin: Style.spacing.huge
     anchors.rightMargin: Style.spacing.rowPaddingX
     spacing: Style.spacing.md
+
+    Button {
+      text: I18n.tr("Comments…")
+      foreground: root.foreground
+      fontFamily: root.fontFamily
+      onClicked: root.commentsRequested()
+    }
+    Button {
+      text:I18n.tr("Assignee…")
+      foreground:root.foreground
+      fontFamily:root.fontFamily
+      onClicked:root.assignmentRequested()
+    }
 
     Text {
       visible: root.description !== ""
@@ -263,7 +283,7 @@ Item {
       id: itemField
       visible: !root.note
       width: parent.width
-      placeholderText: "Add a subtask…"
+      placeholderText: I18n.tr("Add a subtask…")
       foreground: root.foreground
       font.family: root.fontFamily
       font.pixelSize: Style.font.bodySmall
@@ -286,9 +306,8 @@ Item {
 
     // ---- when
     //
-    // Free text, not a calendar: the same parser the quick-add box uses already
-    // understands "tomorrow 5pm" and "next friday", and a date picker that could
-    // not accept those would be a step backwards from typing.
+    // Calendar selection preserves the existing time; text input still accepts
+    // natural language and clearing the field removes the date.
 
     Grid {
       width: parent.width
@@ -297,8 +316,10 @@ Item {
 
       TextField {
         id: dueField
+        objectName: "taskDueField"
+        rightPadding: Style.space(30)
         width: (parent.width - (parent.columns - 1) * parent.spacing) / parent.columns
-        placeholderText: "Due — “tomorrow 5pm”"
+        placeholderText: I18n.tr("Due — “tomorrow 5pm”")
         text: root.dueSeed
         foreground: root.foreground
         font.family: root.fontFamily
@@ -307,25 +328,75 @@ Item {
         // one without a separate button nobody would find.
         onAccepted: { root.dueRequested(text); focus = false }
         Keys.onEscapePressed: { text = root.dueSeed; focus = false }
+        Button {
+          objectName: "taskDueCalendar"
+          anchors.right: parent.right
+          anchors.verticalCenter: parent.verticalCenter
+          width: Style.space(28)
+          height: parent.height
+          horizontalPadding: 0
+          verticalPadding: 0
+          iconText: "󰃭"
+          tooltipText: I18n.tr("Choose due date")
+          foreground: root.foreground
+          focusable: true
+          onClicked: { dueCalendar.seed = dueField.text || root.dueSeed; dueCalendar.open() }
+        }
+        Local.DatePicker {
+          id: dueCalendar
+          objectName: "taskDuePicker"
+          parent: root
+          x: 0
+          y: Math.max(0, Math.min(dueField.mapToItem(root, 0, dueField.height).y, root.height-height))
+          foreground: root.foreground
+          fontFamily: root.fontFamily
+          onDateSelected: function(value) { root.dueRequested(value) }
+        }
       }
 
       TextField {
         id: startField
+        objectName: "taskStartField"
+        rightPadding: Style.space(30)
         width: (parent.width - (parent.columns - 1) * parent.spacing) / parent.columns
-        placeholderText: "Starts…"
+        placeholderText: I18n.tr("Starts…")
         text: root.startSeed
         foreground: root.foreground
         font.family: root.fontFamily
         font.pixelSize: Style.font.bodySmall
         onAccepted: { root.startRequested(text); focus = false }
         Keys.onEscapePressed: { text = root.startSeed; focus = false }
+        Button {
+          objectName: "taskStartCalendar"
+          anchors.right: parent.right
+          anchors.verticalCenter: parent.verticalCenter
+          width: Style.space(28)
+          height: parent.height
+          horizontalPadding: 0
+          verticalPadding: 0
+          iconText: "󰃭"
+          tooltipText: I18n.tr("Choose start date")
+          foreground: root.foreground
+          focusable: true
+          onClicked: { startCalendar.seed = startField.text || root.startSeed; startCalendar.open() }
+        }
+        Local.DatePicker {
+          id: startCalendar
+          objectName: "taskStartPicker"
+          parent: root
+          x: Math.max(0, root.width-width)
+          y: Math.max(0, Math.min(startField.mapToItem(root, 0, startField.height).y, root.height-height))
+          foreground: root.foreground
+          fontFamily: root.fontFamily
+          onDateSelected: function(value) { root.startRequested(value) }
+        }
       }
     }
 
     TextField {
       id: tagsField
       width: parent.width
-      placeholderText: "Tags — “#work #urgent”"
+      placeholderText: I18n.tr("Tags — “#work #urgent”")
       text: root.tagSeed
       foreground: root.foreground
       font.family: root.fontFamily
@@ -342,7 +413,7 @@ Item {
       Dropdown {
         id: repeatPicker
         width: (parent.width - (parent.columns - 1) * parent.spacing) / parent.columns
-        label: "Repeat"
+        label: I18n.tr("Repeat")
         showLabel: false
         options: root.repeatOptions
         foreground: root.foreground
@@ -353,7 +424,7 @@ Item {
       Dropdown {
         id: remindPicker
         width: (parent.width - (parent.columns - 1) * parent.spacing) / parent.columns
-        label: "Remind"
+        label: I18n.tr("Remind")
         showLabel: false
         options: root.reminderOptions
         foreground: root.foreground
@@ -366,7 +437,7 @@ Item {
       id: projectPicker
       visible: root.projectOptions.length > 1
       width: parent.width
-      label: "Project"
+      label: I18n.tr("Project")
       showLabel: false
       options: root.projectOptions
       foreground: root.foreground

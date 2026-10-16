@@ -115,6 +115,31 @@ class CliTestCase(unittest.TestCase):
 
     routes: dict = {}
 
+    def test_uncomplete_preserves_full_task_and_checks_server_state(self):
+        task = {**TASK, "status": 2, "content": "Keep me", "completedTime": "2026-07-29T09:00:00+0000",
+                "items": [{"id": "step", "title": "Keep checklist", "status": 1}]}
+        self.transport.routes[("GET", "/project/p1/task/t1")] = lambda body: dict(task)
+        def update(body):
+            task.update(body)
+            return dict(task)
+        self.transport.routes[("POST", "/task/t1")] = update
+        with mock.patch("ticktick.store.load", return_value={}), mock.patch("ticktick.store.save_quietly"):
+            result = self.run_cli("uncomplete", "t1", "--project", "p1")
+        self.assertTrue(result["ok"])
+        self.assertFalse(result["completed"])
+        body = self.transport.bodies("POST", "/task/t1")[0]
+        self.assertEqual(body["status"], 0)
+        self.assertIsNone(body["completedTime"])
+        for field in ("title", "content", "dueDate", "timeZone", "items", "priority"):
+            self.assertEqual(body[field], task[field])
+
+    def test_uncomplete_rejects_silent_noop(self):
+        self.transport.routes[("GET", "/project/p1/task/t1")] = lambda body: {**TASK, "status": 2}
+        with mock.patch("ticktick.store.save_quietly") as save:
+            result = self.run_cli("uncomplete", "t1", "--project", "p1")
+        self.assertFalse(result["ok"])
+        save.assert_not_called()
+
     def setUp(self) -> None:
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)

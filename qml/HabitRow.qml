@@ -1,4 +1,5 @@
 import QtQuick
+import "I18n.js" as I18n
 import qs.Commons
 import qs.Ui
 import "Model.js" as Model
@@ -18,6 +19,7 @@ CursorSurface {
   property string fontFamily: Style.font.family
 
   signal checkinRequested()
+  signal editRequested()
   signal hovered(bool isHovered)
 
   readonly property var row: habit || ({})
@@ -61,7 +63,7 @@ CursorSurface {
     anchors.left: mark.right
     anchors.leftMargin: Style.spacing.controlGap
     anchors.right: parent.right
-    anchors.rightMargin: Style.spacing.rowPaddingX
+    anchors.rightMargin: Style.space(62)
     anchors.verticalCenter: parent.verticalCenter
     spacing: Style.spacing.xs
 
@@ -105,11 +107,20 @@ CursorSurface {
 
       Text {
         visible: !root.dueToday
-        text: "not today"
+        text: I18n.tr("not today")
         color: root.dim
         font.family: root.fontFamily
         font.pixelSize: Style.font.caption
       }
     }
+  }
+  Button {
+    anchors.right:parent.right
+    anchors.verticalCenter:parent.verticalCenter
+    text:I18n.tr("Edit")
+    foreground:root.foreground
+    fontFamily:root.fontFamily
+    focusable:true
+    onClicked:root.editRequested()
   }
 }

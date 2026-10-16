@@ -1,0 +1,109 @@
+.pragma library
+
+function isChinese(locale) {
+  return /^zh(?:[_-]|$)/i.test(String(locale || ""))
+}
+
+function tr(text, locale) {
+  var language = locale === undefined ? Qt.locale().name : locale
+  return isChinese(language) && Object.prototype.hasOwnProperty.call(zh, text) ? zh[text] : text
+}
+
+function dateLabel(text) {
+  if (!isChinese(Qt.locale().name)) return text
+  return String(text || "").replace(/\b(today|tomorrow|yesterday|Mon|Tue|Wed|Thu|Fri|Sat|Sun|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\b/gi, function(word) {
+    return {today:"今天",tomorrow:"明天",yesterday:"昨天",mon:"周一",tue:"周二",wed:"周三",thu:"周四",fri:"周五",sat:"周六",sun:"周日",jan:"1月",feb:"2月",mar:"3月",apr:"4月",may:"5月",jun:"6月",jul:"7月",aug:"8月",sep:"9月",oct:"10月",nov:"11月",dec:"12月"}[word.toLowerCase()]
+  })
+}
+
+var zh = {
+  "Start stopwatch for this task":"为此任务开始正计时",
+  "Choose due date":"选择截止日期", "Choose start date":"选择开始日期", "Previous month":"上个月", "Next month":"下个月",
+  "date":"日期", "priority":"优先级", "title":"标题", "list":"清单",
+  "Task was not restored. Refresh and try again in Dida365.":"任务未恢复，请刷新或在滴答清单中重试。",
+  "Task unavailable. Refresh the completed list and try again.":"无法读取任务，请刷新已完成列表后重试。",
+  "Choose tasks from one list (up to 50), or add one task per line.":"从同一清单选择任务（最多 50 个），或每行添加一条任务。",
+  "Revoking authorization invalidates this token everywhere it is used, including other tools sharing it.":"撤销授权后，所有使用此令牌的工具都会失去授权。",
+  "Set a goal and schedule for this habit.":"设置此习惯的目标和重复规则。",
+  "Select a habit to edit, or create a new one below.":"选择习惯进行编辑，或在下方新建习惯。",
+  "Keep progress notes with a task.":"在任务中记录进度。",
+  "Choose a member of the shared list, then assign the task.":"选择共享清单成员并分配任务。",
+  "Select an entry to manage it.":"选择要管理的记录。",
+  "Created ":"创建于 ", "Modified ":"修改于 ", " · cached":" · 缓存", " done · best streak ":" 已完成 · 最长连续 ",
+  "Restored to unfinished":"已恢复为未完成",
+  "Today":"今天", "Tomorrow":"明天", "Next 7 days":"最近 7 天", "All tasks":"全部任务",
+  "Done":"已完成", "Habits":"习惯", "Dates":"纪念日", "TASKS":"任务", "Tasks":"任务",
+  "Inbox":"收集箱", "Tools":"工具", "Statistics":"统计", "Settings":"设置", "Search":"搜索",
+  "List":"清单", "Lists":"清单", "Folder":"文件夹", "Untitled":"未命名", "Untitled item":"未命名清单项",
+  "Back":"返回", "Lists…":"管理清单…", "Sign out":"退出登录", "Select":"选择", "Cancel selection":"取消选择",
+  "List…":"清单设置…", "Add habit":"添加习惯", "Sort":"排序", "Sort: List":"排序：清单",
+  "Sort: Date":"排序：日期", "Sort: Priority":"排序：优先级", "Sort: Title":"排序：标题",
+  "Filter":"筛选", "Priority":"优先级", "Any priority":"所有优先级", "High priority":"高优先级",
+  "Medium priority":"中优先级", "Low priority":"低优先级", "No priority":"无优先级", "Tag":"标签", "Any tag":"所有标签",
+  "Priority and tag filters":"按优先级和标签筛选", "Focus history":"专注记录", "Focus history and statistics":"专注记录与统计",
+  "Start stopwatch":"开始正计时", "Pause":"暂停", "Resume":"继续", "Save":"保存",
+  "Discard this block without recording it":"放弃本次专注，不保存记录", "Linked task":"关联任务",
+  "Focus":"专注", "Stopwatch":"正计时", "Short break":"短休息", "Long break":"长休息",
+  "Comments…":"评论…", "Assignee…":"负责人…", "Add a subtask…":"添加清单项…",
+  "Due — “tomorrow 5pm”":"截止日期，例如 2026-10-20 17:00", "Starts…":"开始日期…",
+  "Tags — “#work #urgent”":"标签，例如 #工作 #紧急", "Repeat":"重复", "Remind":"提醒", "Project":"清单",
+  "Does not repeat":"不重复", "Daily":"每天", "Weekly":"每周", "Monthly":"每月", "Yearly":"每年", "Hourly":"每小时",
+  "No reminder":"无提醒", "At the time":"准时", "5 minutes before":"提前 5 分钟", "15 minutes before":"提前 15 分钟",
+  "30 minutes before":"提前 30 分钟", "1 hour before":"提前 1 小时", "1 day before":"提前 1 天",
+  "Add a task — tomorrow 5pm !high #work":"添加任务，例如：提交报告 2026-10-20 17:00 !high #工作",
+  "＋  Add a task…":"＋  添加任务…", "not today":"今天无需打卡", "Edit":"编辑",
+  "Start focus for this task":"为此任务开始专注", "A focus timer is already active":"已有专注计时进行中",
+  "No habits yet. Choose Add habit to get started.":"还没有习惯，点击“添加习惯”开始。",
+  "Nothing matches that filter":"没有符合筛选条件的任务", "Nothing finished recently":"近期没有已完成任务",
+  "Nothing due":"暂无到期任务", "Not signed in":"未登录", "Loading…":"加载中…",
+  "Connect your TickTick account to see your tasks here.":"连接滴答清单账号以查看任务。",
+  "Sign in with browser":"通过浏览器登录", "Paste an API token instead":"改用 API 令牌登录",
+  "In the TickTick web app: avatar → Settings → Account → API Token.":"在滴答清单网页版中打开：头像 → 设置 → 账号 → API 令牌。",
+  "Checking…":"验证中…", "API token":"API 令牌", "Connecting…":"连接中…", "Connect":"连接",
+  "Tasks in bulk":"批量任务", "Tags":"标签", "List folders":"清单文件夹", "Board columns":"看板列",
+  "Task comments":"任务评论", "Task assignment":"任务分配", "Upcoming tasks":"即将到期的任务",
+  "Account time zone":"账号时区", "Revoke authorization":"撤销授权", "Manage":"管理", "Task":"任务",
+  "Important dates from Dida365. Manage these dates in Dida365.":"来自滴答清单的纪念日，请在滴答清单中管理。",
+  "Start (ISO date and time)":"开始时间（ISO 格式）", "End (ISO date and time)":"结束时间（ISO 格式）",
+  "Pomodoro":"番茄钟", "Refresh":"刷新", "Unavailable":"不可用", "No entries yet.":"暂无记录。",
+  "Edit selected":"编辑所选项", "Name":"名称", "List color (#RRGGBB)":"清单颜色（#RRGGBB）",
+  "Keep current folder":"保留当前文件夹", "Goal":"目标", "Per check-in":"每次打卡",
+  "e.g. 8":"例如 8", "e.g. 1":"例如 1", "Unit (optional, e.g. glasses)":"单位（可选，例如 杯）",
+  "Keep existing schedule":"保留现有重复规则", "One new task per line":"每行一条新任务", "Write a progress note":"填写进度说明",
+  "Priority for selected tasks":"所选任务的优先级", "Keep existing priority":"保留现有优先级",
+  "None":"无", "Low":"低", "Medium":"中", "High":"高",
+  "Optional due date for selected tasks (e.g. tomorrow)":"所选任务的截止日期（可选，例如 2026-10-20）",
+  "Add comment":"添加评论", "Add tasks":"添加任务", "Create":"创建", "Assign":"分配", "Save changes":"保存修改",
+  "Revoke authorization…":"撤销授权…", "Remove assignee…":"移除负责人…", "Delete selected…":"删除所选项…",
+  "Cancel edit":"取消编辑", "This action cannot be undone. Continue?":"此操作无法撤销，是否继续？",
+  "Confirm":"确认", "Cancel":"取消", "Choose a task from the selected list.":"请从所选清单中选择任务。",
+  "Select a date to inspect activity.":"选择日期查看活动。", "Updating statistics…":"正在更新统计…",
+  "Statistics unavailable":"统计暂不可用", "Gathering your statistics…":"正在收集统计数据…",
+  "Updating…":"更新中…", "Retry":"重试", "Open tasks":"未完成任务", "Overdue":"已逾期", "Due today":"今天到期",
+  "No task activity yet. Add a task from a task view; completed tasks will appear here.":"暂无任务活动。添加任务后，完成记录会显示在这里。",
+  "Completion history is unavailable. Refresh when connected to load the trend and calendar.":"完成记录暂不可用，请联网后刷新以加载趋势和日历。",
+  "Activity heatmap":"活动热力图", "Outline: today. Tab to inspect; arrows to move; Esc to return.":"边框表示今天。按 Tab 查看，方向键移动，Esc 返回。",
+  "Open tasks by list":"各清单的未完成任务", "No list":"无清单", "Priority · open tasks":"未完成任务的优先级",
+  "Tags · open tasks":"未完成任务的标签", "Tasks with several tags appear in each tag's count.":"带有多个标签的任务会计入每个标签。",
+  "Daily rhythm":"每日节奏", "Upcoming":"即将到期", "Later":"以后", "No date":"无日期",
+  "Custom":"自定义", "Weekdays":"工作日", "Repeats":"重复", "Reminder":"提醒", "At time":"准时",
+  "Notes cannot be completed":"笔记无法标记完成", "Syncing…":"正在同步…", "Due date cleared":"已清除截止日期",
+  "Tags cleared":"已清除标签", "No longer repeats":"已取消重复", "Reminder cleared":"已清除提醒",
+  "Renamed":"已重命名", "Note saved":"已保存笔记", "Finish signing in, then come back":"请完成登录后返回",
+  "Still saving — try again in a moment":"正在保存，请稍后重试", "Saved":"已保存", "Signed in to TickTick":"已登录滴答清单",
+  "Could not read TickTick tasks":"无法读取滴答清单任务", "TickTick command failed":"滴答清单操作失败",
+  "Select tasks from one list at a time":"请只选择同一清单中的任务",
+  "Account settings":"账号设置", "Lists and folders":"清单与文件夹", "New habit":"新习惯", "Selected tasks":"所选任务", "List settings":"清单设置",
+  "Restoring ":"正在恢复：", "Completed ":"已完成：", "Deleted ":"已删除：", "Added ":"已添加：",
+  "Sorted by ":"排序方式：", "Moved to ":"已移至：", "Due ":"截止：", "Starts ":"开始：", "Repeats ":"重复：", "Reminder ":"提醒：",
+  "Start focus — ":"开始专注 — ", " · Press ":" · 按键 ", " · paused":" · 已暂停", " done":" 已完成",
+  "Actions (":"批量操作（", "Account time zone: ":"账号时区：", "New ":"新建", "habit":"习惯", "entry":"记录",
+  "Complete ":"完成 ", " selected":" 个所选任务", "Updated ":"更新于 ", " · cached tasks":" · 缓存任务",
+  " Available figures are shown below.":"下方显示已有统计。", " Select Retry to try again.":"请点击重试。",
+  "Completed · ":"已完成 · ", "Completed · last ":"最近完成 · ", " days":" 天", " · grouped by week":" · 按周分组",
+  "5 weeks · ":"5 周 · ", " completed":" 个已完成", "Peak: ":"最高：", " in one day":" 个／天",
+  "Focus today: ":"今日专注：", " min · ":" 分钟 · ", " blocks":" 次", "Habits today: ":"今日习惯：", " · future":" · 未来",
+  "Nothing matches “":"没有匹配“", "Delete “":"删除“", "”?\nThis cannot be undone.":"”？\n此操作无法撤销。"
+}
+
+if (typeof module !== "undefined") module.exports = {tr:tr, isChinese:isChinese}

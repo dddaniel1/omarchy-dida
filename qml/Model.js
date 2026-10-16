@@ -1,4 +1,5 @@
 .pragma library
+.import "I18n.js" as I18n
 
 // Presentation helpers for the TickTick widget. Pure, stateless, and total:
 // every function returns a usable string or colour for any input, including
@@ -55,8 +56,8 @@ function elide(text, max) {
 
 function sectionTitle(bucket) {
   var key = squish(bucket).toLowerCase()
-  if (BUCKET_TITLES[key]) return BUCKET_TITLES[key]
-  if (key === "") return "Tasks"
+  if (BUCKET_TITLES[key]) return I18n.tr(BUCKET_TITLES[key])
+  if (key === "") return I18n.tr("Tasks")
   return key.charAt(0).toUpperCase() + key.substring(1)
 }
 
@@ -97,7 +98,7 @@ function isDone(row) {
 }
 
 function priorityLabel(priority) {
-  return PRIORITY_LABELS[toInt(priority)] || ""
+  return I18n.tr(PRIORITY_LABELS[toInt(priority)] || "")
 }
 
 // High burns urgent, medium and low walk back toward the bar foreground, and
@@ -141,13 +142,14 @@ function repeatLabel(flag) {
   var text = squish(flag).toUpperCase()
   if (text === "") return ""
   var freq = /FREQ=([A-Z]+)/.exec(text)
-  if (!freq) return "Custom"
+  if (!freq) return I18n.tr("Custom")
   var name = freq[1]
   var interval = toInt((/INTERVAL=(\d+)/.exec(text) || [])[1]) || 1
   var byday = (/BYDAY=([A-Z,\-+0-9]+)/.exec(text) || [])[1] || ""
-  if (name === "WEEKLY" && interval === 1 && isWeekdaySet(byday)) return "Weekdays"
-  if (!FREQ_UNITS[name]) return "Repeats"
-  if (interval === 1) return FREQ_EVERY[name]
+  if (name === "WEEKLY" && interval === 1 && isWeekdaySet(byday)) return I18n.tr("Weekdays")
+  if (!FREQ_UNITS[name]) return I18n.tr("Repeats")
+  if (interval === 1) return I18n.tr(FREQ_EVERY[name])
+  if (I18n.isChinese(Qt.locale().name)) return "每 " + interval + " " + {DAILY:"天",WEEKLY:"周",MONTHLY:"月",YEARLY:"年",HOURLY:"小时"}[name]
   return "Every " + interval + " " + FREQ_UNITS[name] + "s"
 }
 
@@ -168,15 +170,17 @@ function reminderLabel(reminder) {
   if (text === "") return ""
   var body = text.replace(/^TRIGGER[:;=]/, "")
   var parts = /^(-)?P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?$/.exec(body)
-  if (!parts) return "Reminder"
+  if (!parts) return I18n.tr("Reminder")
   var before = parts[1] === "-"
   var minutes = toInt(parts[2]) * 1440 + toInt(parts[3]) * 60 + toInt(parts[4]) + (toInt(parts[5]) >= 30 ? 1 : 0)
-  if (minutes === 0) return "At time"
+  if (minutes === 0) return I18n.tr("At time")
+  if (I18n.isChinese(Qt.locale().name) && parts[2] === undefined) return (before ? "提前 " : "延后 ") + spanText(minutes)
   if (parts[2] === undefined) return spanText(minutes) + (before ? " before" : " after")
   // All-day form: the day offset and the clock time are two different facts.
   var days = before ? Math.ceil(minutes / 1440) : Math.floor(minutes / 1440)
   var clock = before ? (1440 - (minutes % 1440)) % 1440 : minutes % 1440
   var when = days === 0 ? "On the day" : days + (days === 1 ? " day " : " days ") + (before ? "before" : "after")
+  if (I18n.isChinese(Qt.locale().name)) when = days === 0 ? "当天" : (before ? "提前 " : "延后 ") + days + " 天"
   return when + ", " + clockText(clock)
 }
 
@@ -191,7 +195,7 @@ function spanText(minutes) {
   var m = toInt(minutes)
   if (m % 1440 === 0) return plural(m / 1440, "day")
   if (m % 60 === 0) return plural(m / 60, "hour")
-  return m + " min"
+  return m + (I18n.isChinese(Qt.locale().name) ? " 分钟" : " min")
 }
 
 function clockText(minutes) {
@@ -206,6 +210,7 @@ function pad2(value) {
 
 function plural(count, noun) {
   var n = toInt(count)
+  if (I18n.isChinese(Qt.locale().name)) return n + " " + ({day:"天",hour:"小时",block:"次"}[noun] || noun)
   return n + " " + noun + (n === 1 ? "" : "s")
 }
 
@@ -299,7 +304,7 @@ function habitTally(row) {
 // day is not a streak yet, and showing "1d" on every habit would be noise.
 function habitStreakLabel(row) {
   var days = toInt((row || {}).streak)
-  return days > 1 ? days + "d" : ""
+  return days > 1 ? days + (I18n.isChinese(Qt.locale().name) ? "天" : "d") : ""
 }
 
 // `mm:ss`, growing to `h:mm:ss` past an hour. Seconds, not minutes: this is a
@@ -330,11 +335,12 @@ function focusRemaining(endsAt, nowMs) {
 }
 
 function focusPhaseLabel(phase) {
+  if (phase === "timing") return I18n.tr("Stopwatch")
   var name = String(phase || "")
-  if (name === "focus") return "Focus"
-  if (name === "shortBreak") return "Short break"
-  if (name === "longBreak") return "Long break"
-  return "Focus"
+  if (name === "focus") return I18n.tr("Focus")
+  if (name === "shortBreak") return I18n.tr("Short break")
+  if (name === "longBreak") return I18n.tr("Long break")
+  return I18n.tr("Focus")
 }
 
 // Today's focus totals: "2 blocks · 25m", and marked when they are not live.
@@ -345,8 +351,8 @@ function focusTallyLabel(tally) {
   var blocks = toInt(data.count)
   var minutes = toInt(data.minutes)
   var text = plural(blocks, "block")
-  if (minutes > 0) text += " · " + minutes + "m"
-  if (String(data.source || "network") !== "network") text += " (cached)"
+  if (minutes > 0) text += " · " + minutes + (I18n.isChinese(Qt.locale().name) ? "分钟" : "m")
+  if (String(data.source || "network") !== "network") text += I18n.isChinese(Qt.locale().name) ? "（缓存）" : " (cached)"
   return text
 }
 
@@ -358,7 +364,7 @@ function focusPrefsLabel(prefs) {
   var short = toInt(p.shortBreak) || 5
   var long = toInt(p.longBreak) || 15
   var every = toInt(p.longInterval) || 4
-  return focus + "m · " + short + "/" + long + "m every " + every
+  return I18n.isChinese(Qt.locale().name) ? focus + "分钟 · 短休息 " + short + " / 长休息 " + long + "分钟 · 每 " + every + " 次" : focus + "m · " + short + "/" + long + "m every " + every
 }
 
 // The bar label. The task count and the open habits are separate numbers because
@@ -457,4 +463,3 @@ if (typeof module !== "undefined") {
     pieSlices: pieSlices
   }
 }
-

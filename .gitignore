@@ -26,4 +26,5 @@ credentials.json
 
 # Local scratch
 /tmp/
+/dist/
 *.log

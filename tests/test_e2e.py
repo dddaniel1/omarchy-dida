@@ -21,7 +21,7 @@ import pathlib
 import sys
 import tempfile
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
@@ -264,8 +264,61 @@ class StatsTest(Base):
         self.fake.offline = True
         payload = self.ok("stats", "--offline", "--days", "3")
         self.assertEqual(payload["days"], 3)
-        self.assertEqual(len(payload["trend"]), 3)
+        self.assertEqual(payload["trend"], [])
+        self.assertEqual(payload["heatmap"], {})
+        self.assertIsNone(payload["summary"]["completed"])
+        self.assertFalse(payload["historyAvailable"])
+        self.assertIn("Completion history", payload["warning"])
         self.assertEqual(payload["summary"]["overdue"], 1)
+
+    def test_heatmap_fetch_covers_calendar_history_without_expanding_trend(self):
+        now = datetime.now().astimezone()
+        old = now - timedelta(days=20)
+        self.fake.add_task(title="earlier completion", projectId="p-work", status=2,
+                           completedTime=old.isoformat())
+        calls = []
+        original = api.Client.completed_tasks
+
+        def completed(client, **kwargs):
+            calls.append(kwargs)
+            return original(client, **kwargs)
+
+        self._patch(api.Client, "completed_tasks", completed)
+        payload = self.ok("stats", "--days", "3")
+        start = datetime.fromisoformat(calls[0]["startDate"])
+        expected = now.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=now.weekday() + 28)
+        self.assertEqual(start, expected)
+        self.assertTrue(payload["historyAvailable"])
+        self.assertEqual(len(payload["trend"]), 3)
+        self.assertEqual(payload["summary"]["completed"], 1)
+        self.assertEqual(payload["heatmap"]["total"], 2)
+
+    def test_history_failure_does_not_become_zero_completed(self):
+        def unavailable(client, **kwargs):
+            from ticktick.errors import NetworkError
+            raise NetworkError("Completion history unavailable")
+
+        self._patch(api.Client, "completed_tasks", unavailable)
+        payload = self.ok("stats")
+        self.assertFalse(payload["historyAvailable"])
+        self.assertIsNone(payload["summary"]["completed"])
+        self.assertEqual(payload["trend"], [])
+        self.assertEqual(payload["heatmap"], {})
+        self.assertGreater(payload["summary"]["open"], 0)
+
+    def test_longer_trend_fetch_covers_first_local_day(self):
+        calls = []
+        original = api.Client.completed_tasks
+
+        def completed(client, **kwargs):
+            calls.append(kwargs)
+            return original(client, **kwargs)
+
+        self._patch(api.Client, "completed_tasks", completed)
+        payload = self.ok("stats", "--days", "90")
+        start = datetime.fromisoformat(calls[0]["startDate"])
+        self.assertEqual(start.date().isoformat(), payload["trend"][0]["date"])
+        self.assertEqual((start.hour, start.minute, start.second), (0, 0, 0))
 
 
 # ------------------------------------------------------- local-first

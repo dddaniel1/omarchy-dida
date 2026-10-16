@@ -55,11 +55,11 @@ To run your working copy as the live widget, symlink it into the plugins directo
 
 ```bash
 ln -s "$PWD" ~/.config/omarchy/plugins/dddaniel1.dida365
-omarchy plugin rescan
-omarchy bar plugin add dddaniel1.dida365 right
+omarchy-shell shell rescanPlugins
+omarchy plugin enable dddaniel1.dida365 --section right
 ```
 
-`omarchy plugin rescan` hot-reloads plugin code — no shell restart, no logout. Edit a `.qml`
+`omarchy-shell shell rescanPlugins` hot-reloads plugin code — no shell restart, no logout. Edit a `.qml`
 file, rescan, and the widget rebuilds in place. If a widget slot goes blank after an edit, you
 have a QML error; read it with `quickshell log "$(ls -t /run/user/$UID/quickshell/by-id/*/log.qslog | head -1)"`.
 
@@ -83,6 +83,14 @@ you that `function escape()` is an illegal method name, that a wrapping `Text` b
 Both of the first two shipped past it and were caught by `tests/qml_smoke.sh`, which loads the
 widget in a real Quickshell and fails on any warning. `tests/validate_qml_api.py` covers the
 third, and cross-checks its own member lists against a real install when one is present.
+
+`bash tests/management_ui.sh` runs management interaction acceptance inside Quickshell
+with QtTest input helpers and a fake service. It checks keyboard and mouse actions,
+confirmation, scope resets, failure recovery and 420/600/680 logical widths. It uses
+the offscreen platform so desktop focus cannot interrupt the tests; its captures are
+layout evidence, not a check of the active desktop theme. The harness requires QtTest
+alongside the installed Omarchy shell. For actual theme captures, run
+`bash tests/screenshots.sh /tmp/opencode/dida-screenshots` in a live Wayland session.
 
 To type-check locally, `qs.Ui` has to be reachable under a `qs/` prefix:
 
@@ -109,7 +117,7 @@ Include the output of:
 ```bash
 ticktick status
 ticktick sync
-omarchy plugin list | grep ticktick
+omarchy plugin list | grep dida365
 ```
 
 `status` never prints your token, so it is safe to paste.

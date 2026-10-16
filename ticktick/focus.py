@@ -26,10 +26,11 @@ from . import dates as _dates
 FOCUS = "focus"
 SHORT_BREAK = "shortBreak"
 LONG_BREAK = "longBreak"
+TIMING = "timing"
 IDLE = "idle"
 
-PHASES = (IDLE, FOCUS, SHORT_BREAK, LONG_BREAK)
-WORK_PHASES = (FOCUS,)
+PHASES = (IDLE, FOCUS, SHORT_BREAK, LONG_BREAK, TIMING)
+WORK_PHASES = (FOCUS, TIMING)
 BREAK_PHASES = (SHORT_BREAK, LONG_BREAK)
 
 #: Defaults, used when a setting is 0 or missing.
@@ -38,7 +39,7 @@ DEFAULT_SHORT_BREAK_MINUTES = 5
 DEFAULT_LONG_BREAK_MINUTES = 15
 DEFAULT_LONG_BREAK_INTERVAL = 4
 
-#: The API's discriminator: 0 pomodoro, 1 open-ended stopwatch. Only 0 is produced here.
+#: The API's discriminator: 0 pomodoro, 1 open-ended stopwatch.
 TYPE_POMODORO = 0
 TYPE_TIMING = 1
 
@@ -116,6 +117,8 @@ def next_phase(blocks_done: Any, settings: Prefs) -> str:
 
 
 def phase_label(phase: str) -> str:
+    if phase == TIMING:
+        return "Stopwatch"
     if phase == FOCUS:
         return "Focus"
     if phase == SHORT_BREAK:
@@ -195,6 +198,9 @@ def is_paused(state: dict) -> bool:
 def remaining_ms(state: dict, now_ms: int) -> int:
     """Milliseconds left, whether the clock is running or paused. Never negative."""
     state = normalise(state)
+    if state["phase"] == TIMING:
+        end = state["pause_started_at"] or int(now_ms)
+        return max(0, end - state["started_at"] - state["pause_ms"])
     if state["phase"] == IDLE:
         return 0
     if state["ends_at"]:
@@ -225,7 +231,7 @@ def start(
     A discarded block is never uploaded: the account counts completed pomodoros, and
     banking partial ones would inflate the statistics it shows on every device.
     """
-    if phase not in (FOCUS,) + BREAK_PHASES:
+    if phase not in WORK_PHASES + BREAK_PHASES:
         phase = FOCUS
     settings = settings or settings_of(state)
     out = blank_state(settings)
@@ -233,7 +239,7 @@ def start(
         {
             "phase": phase,
             "started_at": int(now_ms),
-            "ends_at": int(now_ms) + phase_seconds(phase, settings) * 1000,
+            "ends_at": 1 if phase == TIMING else int(now_ms) + phase_seconds(phase, settings) * 1000,
             "blocks_done": _int(normalise(state).get("blocks_done")) or 0,
             "task_id": str(task_id or ""),
             "task_title": str(task_title or ""),
@@ -260,7 +266,7 @@ def resume(state: dict, *, now_ms: int) -> dict:
     if out["phase"] == IDLE or out["ends_at"]:
         return out
     left = _int(out.get("paused_left_ms")) or 0
-    out["ends_at"] = int(now_ms) + max(0, left)
+    out["ends_at"] = 1 if out["phase"] == TIMING else int(now_ms) + max(0, left)
     out["paused_left_ms"] = 0
     if out["pause_started_at"]:
         out["pause_ms"] = (_int(out.get("pause_ms")) or 0) + max(
@@ -291,6 +297,8 @@ def stop(state: dict) -> dict:
 def settled(state: dict, *, now_ms: int) -> bool:
     """Whether the clock has run out (paused clocks never have)."""
     state = normalise(state)
+    if state["phase"] == TIMING:
+        return False
     if state["phase"] == IDLE:
         return False
     if not state["ends_at"]:
@@ -307,6 +315,17 @@ def complete(state: dict, *, now_ms: int) -> tuple[dict, dict | None]:
     `start`, so the long-break cadence counts work actually done.
     """
     current = normalise(state)
+    if current["phase"] == TIMING:
+        end = current["pause_started_at"] or int(now_ms)
+        record = {"type": TYPE_TIMING, "startTime": wire_time(current["started_at"]),
+                  "endTime": wire_time(end),
+                  "duration": max(1, remaining_ms(current, now_ms) // 1000),
+                  "pauseDuration": current["pause_ms"] // 1000}
+        if current["task_id"]:
+            record["taskId"] = current["task_id"]
+        if current["note"]:
+            record["note"] = current["note"]
+        return stop(current), record
     if current["phase"] == IDLE:
         return current, None
 
@@ -411,6 +430,7 @@ def summarise(records: list[dict]) -> dict:
         seconds += record_seconds(record)
     return {
         "count": blocks,
+        "pomodoros": sum(1 for r in records or [] if isinstance(r, dict) and int(r.get("type") or 0) == TYPE_POMODORO),
         "seconds": seconds,
         "minutes": int(round(seconds / 60)),
         "duration": seconds,
@@ -478,6 +498,7 @@ def status(state: dict, *, now_ms: int, settings: Prefs | None = None) -> dict:
         "running": bool(state["ends_at"]) and phase != IDLE,
         "paused": phase != IDLE and not state["ends_at"],
         "secondsLeft": int(round(left / 1000)),
+        "pauseSeconds": state["pause_ms"] // 1000,
         "endsAt": _int(state.get("ends_at")) or 0,
         "clock": clock_text(left) if phase != IDLE else "",
         "blocksDone": _int(state.get("blocks_done")) or 0,

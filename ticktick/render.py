@@ -331,7 +331,8 @@ def _stats(payload: dict, s: Style, width: int) -> str:
         head += f" · {today} today"
     lines.append(head)
 
-    tail = f"  {int(_to_number(summary.get('completed')))} completed in {days}d"
+    tail = ("  Completion history unavailable" if payload.get("historyAvailable") is False
+            else f"  {int(_to_number(summary.get('completed')))} completed in {days}d")
     blocks = int(_to_number(summary.get("focusBlocks")))
     minutes = int(_to_number(summary.get("focusMinutes")))
     if blocks or minutes:

@@ -58,6 +58,10 @@ def preview_get(self):
         ],
         "/open/v1/habit/sections": [],
         "/open/v1/habit/checkins": [],
+        "/open/v1/countdown": [
+            {"id": "date-trip", "name": "Trip to Kyoto", "date": 20261112},
+            {"id": "date-birthday", "name": "Birthday", "date": 20261208},
+        ],
     }
     if path in payloads:
         self._send(200, payloads[path])
@@ -146,18 +150,26 @@ ShellRoot {
     script.stop()
     shell.widget.open()
     cardShot.name = name
+    cardShot.attempts = 0
     cardShot.restart()
   }
 
   Timer {
     id: cardShot
     property string name: ""
+    property int attempts: 0
     interval: 200
     onTriggered: shell.captureCard(name)
   }
 
   function captureCard(name) {
     var w = shell.widget
+    var expectedView = name === "dates" ? "countdown" : name.indexOf("manage") === 0 ? "manage" : ""
+    if (expectedView !== "" && w.service.view !== expectedView) {
+      console.error("SHOT wrong view for " + name + ": " + w.service.view)
+      Qt.quit()
+      return
+    }
     if (name === "detail") {
       for (var i = 0; i < w.rows.length; i++) {
         if (String(w.rows[i].title).indexOf("lab report") >= 0) w.expandedId = String(w.rows[i].id)
@@ -171,7 +183,20 @@ ShellRoot {
       w.service.focusState = ({ phase: "long_break" })
     }
     var p = shell.widget ? shell.widget.panel : null
-    if (!p || !p.open || !p.backingWindowVisible) return
+    if (!p || !p.open || !p.backingWindowVisible) {
+      cardShot.attempts++
+      if (cardShot.attempts < 20) { shell.widget.open(); cardShot.restart() }
+      else console.error("SHOT capture unavailable: " + name)
+      return
+    }
+    function resetManagement(item) {
+      if (item.objectName === "sidebar") item.enabled = false
+      if (item.objectName === "managementPane" && item.parent && item.parent.parent)
+        item.parent.parent.contentY = name === "manage-bottom" ? Math.max(0,item.parent.parent.contentHeight-item.parent.parent.height) : 0
+      var children=item.children || []
+      for (var j=0;j<children.length;j++) resetManagement(children[j])
+    }
+    resetManagement(p.contentItem[0])
     // Capture the QML surface itself while the scripted state is held steady.
     var card = p.contentItem[0].parent.parent
     var targetPath = Quickshell.env("DIDA_SCREENSHOT_DIR") + "/" + name + ".png"
@@ -260,7 +285,7 @@ ShellRoot {
   // One capture per step; the shell script grabs the screen between them.
   Timer {
     id: script
-    property int step: 0
+    property int step: Quickshell.env("DIDA_ACCEPTANCE_ONLY") === "1" ? 14 : 0
     interval: 4000
     repeat: true
     running: true
@@ -357,6 +382,31 @@ ShellRoot {
         shell.announceCard("focus")
         console.log("SHOT step focus linked=" + Boolean(w.service.focusState.taskId))
         break
+      case 14:
+        w.openTools("New habit",["habit"],null)
+        break
+      case 15:
+        shell.announceCard("manage")
+        console.log("SHOT step manage")
+        break
+      case 16:
+        w.panel.contentWidth = Style.space(600)
+        break
+      case 17:
+        shell.announceCard("manage-narrow")
+        console.log("SHOT step manage-narrow")
+        break
+      case 18:
+        shell.announceCard("manage-bottom")
+        console.log("SHOT step manage-bottom")
+        break
+      case 19:
+        w.setView("countdown")
+        break
+      case 20:
+        shell.announceCard("dates")
+        console.log("SHOT step dates")
+        break
       default:
         Qt.quit()
       }
@@ -380,13 +430,13 @@ capture() {  # capture <name> <ready-marker>
     if grep -q "SHOT $marker" "$WORK/out.log" 2>/dev/null; then break; fi
     sleep 0.25; tries=$((tries + 1))
   done
-  grep -q "SHOT $marker" "$WORK/out.log" || { info "no $marker marker; skipping $name"; return; }
+  grep -q "SHOT $marker" "$WORK/out.log" || { cat "$WORK/out.log"; fail "no $marker marker for $name"; }
   if [ "$name" != bar ]; then
     for _ in $(seq 1 20); do [ -s "$OUT/$name.png" ] && break; sleep 0.1; done
     [ -s "$OUT/$name.png" ] || fail "rendered card capture failed for $name"
     info "wrote $OUT/$name.png"
     return
-  fi
+fi
   sleep 0.5
   # The geometry line is named after the image, not after the readiness marker.
   rect="$(sed -e 's/\x1b\[[0-9;]*m//g' "$WORK/out.log" \
@@ -433,6 +483,7 @@ PY
   fi
 }
 
+if [ "${DIDA_ACCEPTANCE_ONLY:-0}" != 1 ]; then
 capture bar "bar "
 capture popup "step popup"
 capture detail "step detail"
@@ -440,8 +491,17 @@ capture lists "step lists"
 capture narrow "step narrow"
 capture habits "step habits"
 capture focus "step focus"
+fi
+capture manage "step manage"
+capture manage-narrow "step manage-narrow"
+capture manage-bottom "step manage-bottom"
+capture dates "step dates"
 
 wait $QS_PID 2>/dev/null
+if grep -q 'SHOT wrong view\|SHOT capture unavailable' "$WORK/out.log"; then
+  cat "$WORK/out.log"
+  fail "capture did not match its requested view"
+fi
 sed -e 's/\x1b\[[0-9;]*m//g' "$WORK/out.log" | grep -E "SHOT|qml:" | sed 's/^/  /'
 
 ls -1 "$OUT"/*.png 2>/dev/null | sed 's/^/  /' || fail "nothing was captured"

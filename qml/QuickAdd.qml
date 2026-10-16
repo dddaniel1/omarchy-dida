@@ -1,4 +1,5 @@
 import QtQuick
+import "I18n.js" as I18n
 import qs.Commons
 import qs.Ui
 
@@ -43,7 +44,7 @@ Item {
     TextField {
       id: field
       width: parent.width
-      placeholderText: "Add a task — tomorrow 5pm !high #work"
+      placeholderText: I18n.tr("Add a task — tomorrow 5pm !high #work")
       foreground: root.foreground
       font.family: root.fontFamily
       font.pixelSize: Style.font.body

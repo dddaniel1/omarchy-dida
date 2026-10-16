@@ -27,6 +27,7 @@ from . import (
     dates,
     focus,
     habits,
+    manage,
     nlp,
     render,
     stats,
@@ -301,7 +302,7 @@ def _build_parser() -> _Parser:
     p = cmd(
         "completed",
         "List recently completed tasks. The window filters on completedTime, not on the "
-        "due date, and completing is one-way: the Open API cannot un-complete a task.",
+        "due date.",
         _cmd_completed,
     )
     p.add_argument("--days", type=int, default=7, metavar="N",
@@ -375,7 +376,7 @@ def _build_parser() -> _Parser:
                      _cmd_focus_start)
     )
     starter.add_argument("--phase", default=focus.FOCUS,
-                         choices=(focus.FOCUS, focus.SHORT_BREAK, focus.LONG_BREAK))
+                         choices=(focus.FOCUS, focus.SHORT_BREAK, focus.LONG_BREAK, focus.TIMING))
     starter.add_argument("--task-id", default="", metavar="TASK_ID",
                          help="attach the finished block to a task")
     starter.add_argument("--task-title", default="", metavar="TEXT",
@@ -402,6 +403,10 @@ def _build_parser() -> _Parser:
     logged.add_argument("--pause-seconds", type=int, default=0, metavar="N")
     logged.add_argument("--task-id", default="", metavar="TASK_ID")
     logged.add_argument("--note", default="", metavar="TEXT")
+
+    p = cmd("uncomplete", "Restore a completed task to unfinished (requires a connection).", _cmd_uncomplete)
+    p.add_argument("taskId")
+    p.add_argument("--project", required=True, metavar="ID")
 
     p = with_offline(with_project(cmd("complete", "Mark a task done.", _cmd_complete)))
     p.add_argument("taskId")
@@ -458,6 +463,7 @@ def _build_parser() -> _Parser:
     p = cmd("parse", "Dry-run the natural-language parser.", _cmd_parse)
     p.add_argument("text", nargs="+")
 
+    manage.register(cmd)
     cmd("selftest", "Run offline assertions over the pure helpers.", _cmd_selftest)
     return parser
 
@@ -1516,9 +1522,8 @@ def _cmd_stats(args: argparse.Namespace) -> dict:
 
     Assembled from the reads the rest of the CLI already makes, so the only new request
     is the completed-task window, which nothing else can answer. Every piece degrades on
-    its own: a dead link leaves the trend at zero with a warning attached rather than
-    failing the read, because the numbers that did come back are still true, and the
-    widget hides a section it was handed nothing for.
+    its own: unavailable history is marked explicitly while the available figures
+    remain readable with a warning.
     """
     cfg = config.load()
     state = store.load()
@@ -1536,16 +1541,24 @@ def _cmd_stats(args: argparse.Namespace) -> dict:
 
     client: api.Client | None = None
     completed_rows: list[dict] = []
+    history_available = False
     if not args.offline:
         # `_read_source` has already built a client and proved the token usable, so this
         # cannot raise an auth error the top of the command would not have raised first.
         client = _client(cfg)
         try:
             tasks = client.completed_tasks(
-                startDate=_wire_date(now - timedelta(days=days)),
+                # Cover both the trend and all five calendar weeks of the heatmap.
+                startDate=_wire_date(min(
+                    now.replace(hour=0, minute=0, second=0, microsecond=0)
+                    - timedelta(days=days - 1),
+                    now.replace(hour=0, minute=0, second=0, microsecond=0)
+                    - timedelta(days=now.weekday() + 28),
+                )),
                 endDate=_wire_date(now),
             )
             completed_rows = _completed_rows(client, cfg, tasks, now)
+            history_available = True
         except (NetworkError, ApiError) as exc:
             info["warning"] = info["warning"] or str(exc)
 
@@ -1575,6 +1588,12 @@ def _cmd_stats(args: argparse.Namespace) -> dict:
         habits=habits_payload,
         focus=focus_payload,
     )
+    payload["historyAvailable"] = history_available
+    if not history_available:
+        payload["summary"]["completed"] = None
+        payload["trend"] = []
+        payload["heatmap"] = {}
+        info["warning"] = info.get("warning") or "Completion history is unavailable. Connect and refresh to try again."
     store.save_quietly(state)
     return {**payload, **info}
 
@@ -1589,6 +1608,23 @@ def _cmd_complete(args: argparse.Namespace) -> dict:
     info.update(_push(client, state))
     store.save_quietly(state)
     return {"id": args.taskId, "projectId": pid, "completed": True, **info}
+
+
+def _cmd_uncomplete(args: argparse.Namespace) -> dict:
+    """Restore through a full update, then verify the server persisted the status."""
+    client = _client(config.load())
+    task = client.task(args.project, args.taskId)
+    if not task or str(task.get("id") or "") != args.taskId:
+        raise NotFoundError("Task unavailable. Refresh the completed list and try again.")
+    task = {**task, "status": 0, "completedTime": None}
+    _post_task(client, task, args.project)
+    restored = client.task(args.project, args.taskId)
+    if not restored or restored.get("status") != 0:
+        raise UsageError("Task was not restored. Refresh and try again in Dida365.")
+    state = store.load()
+    state["fetched_at"] = 0
+    store.save_quietly(state)
+    return {"id": args.taskId, "projectId": args.project, "completed": False}
 
 
 def _cmd_delete(args: argparse.Namespace) -> dict:
@@ -1877,6 +1913,7 @@ def _focus_tally(
         start, end = focus.window(day, _focus_now_ms())
         try:
             records = client.focuses(start, end, focus.TYPE_POMODORO)
+            records += client.focuses(start, end, focus.TYPE_TIMING)
             store.remember_focus(state, records)
             store.save_quietly(state)
             info["tallySource"] = "network"
@@ -1922,6 +1959,7 @@ def _focus_history(client: Any, state: dict, *, days: int) -> list[dict]:
         end = dates.format(_midnight_of(day + timedelta(days=1)))
         try:
             records = client.focuses(start, end, focus.TYPE_POMODORO)
+            records += client.focuses(start, end, focus.TYPE_TIMING)
         except (NetworkError, ApiError):
             out.append({"date": stamp, "count": 0, "seconds": 0, "minutes": 0,
                         "duration": 0, "source": "unavailable"})
@@ -1993,7 +2031,7 @@ def _focus_transition(args: argparse.Namespace, action: str) -> dict:
     elif action == "stop":
         timer = focus.stop(timer)
     elif action == "complete":
-        if not focus.settled(timer, now_ms=now_ms):
+        if timer["phase"] != focus.TIMING and not focus.settled(timer, now_ms=now_ms):
             # Asked to complete a block that has not run out. Say so instead of
             # recording minutes nobody worked; the timer is left exactly as it was.
             return {
