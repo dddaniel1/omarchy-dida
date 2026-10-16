@@ -19,9 +19,9 @@ TickTick's own rules, in the bar.
 - **`ticktick habits`**, **`ticktick checkin`**, and **`ticktick focus`**
   (`status`/`start`/`pause`/`resume`/`stop`/`complete`/`log`), so both are scriptable.
 - **A Stats view** — a read-only dashboard: a completed-per-day trend over the **Done**
-  window, a 5-week calendar-aligned activity heatmap, the open work grouped by list with a
-  proportional segmented distribution bar and priority/tag breakdown, and the day's
-  habit tally and focus minutes. Fetched on demand and off the poll, and gated by the new
+  window, a 5-week calendar-aligned activity heatmap, the open work as a donut chart with
+  a matching per-list bar breakdown and a priority/tag summary, and the day's habit tally
+  and focus minutes. Fetched on demand and off the poll, and gated by the new
   `showStats` setting. **`ticktick stats`** renders the same thing at a terminal.
 - **Two-pane layout with sidebar** — a navigation sidebar (`qml/Sidebar.qml`) holding
   smart lists, user lists, and the focus timer alongside the task list.

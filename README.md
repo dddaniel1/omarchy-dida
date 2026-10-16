@@ -274,9 +274,9 @@ on.
   endpoint that can see finished work.
 - **Activity heatmap** — a 5-week calendar-aligned activity grid (weeks × 7 days) showing
   daily completion frequency and intensity.
-- **Open work** — the outstanding tasks grouped by list with a proportional distribution
-  bar and palette coloring, with a priority chip row and a tag breakdown, all read from
-  the same rows the task pane renders.
+- **Open work** — a donut chart of the outstanding tasks by list, beside a matching bar
+  breakdown that labels each list's share, a priority chip row and a tag breakdown, all
+  read from the same rows the task pane renders.
 - **Habits and focus** — the day's check-in tally, the best current streak, and how many
   pomodoros and minutes were logged today.
 
