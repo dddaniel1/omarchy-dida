@@ -68,6 +68,9 @@ Item {
   property bool authed: true
   property bool loaded: false
   property bool refreshing: false
+  property bool manualTaskRefresh: false
+  property bool manualHabitRefresh: false
+  readonly property bool manualRefreshing: manualTaskRefresh || manualHabitRefresh
   property string errorText: ""
   property string actionStatus: ""
   property string view: root.normalizeView(root.setting("defaultView", "today"))
@@ -209,7 +212,8 @@ Item {
 
   // --- commands ---------------------------------------------------------
 
-  function refresh() {
+  function refresh(notify) {
+    if (notify === true) manualTaskRefresh = true
     // Replacing `tasks` rebuilds every delegate in the list, which destroys whatever
     // field is being typed into and the text in it. A poll landing mid-edit must not
     // do that, so it waits — deferred, never dropped.
@@ -242,6 +246,7 @@ Item {
     if (priorityFilter >= 0) args = args.concat(["--priority", String(priorityFilter)])
     if (tagFilter !== "") args = args.concat(["--tag", tagFilter])
     if (boolSetting("includeUndated", false)) args.push("--include-undated")
+    if (manualTaskRefresh) args.push("--refresh")
     return args
   }
 
@@ -651,9 +656,11 @@ Item {
   // Habits, read on entering the Habits view and whenever a write settles. Their own
   // process, for the same reason tags have one: a habit fetch is a second endpoint and
   // must never delay a click or a task poll.
-  function loadHabits() {
+  function loadHabits(notify) {
+    if (notify === true && showHabits) manualHabitRefresh = true
     if (habitsProcess.running || !showHabits) return
     habitsProcess.command = ["python3", helperPath, "habits"]
+    if (manualHabitRefresh) habitsProcess.command.push("--refresh")
     habitsProcess.running = true
   }
 
@@ -1143,6 +1150,12 @@ Item {
       root.refreshing = false
       root.loaded = true
       root.applyRead(String(readOut.text || ""), String(readErr.text || ""))
+      if (root.manualTaskRefresh) {
+        var payload = root.payloadOf(String(readOut.text || ""))
+        root.toast(payload && payload.ok === true ? (payload.warning || "Task list refreshed")
+                   : root.messageOf(payload, readErr.text, "Refresh failed. Try again."))
+        root.manualTaskRefresh = false
+      }
       if (root._refreshQueued) {
         root._refreshQueued = false
         Qt.callLater(root.refresh)
@@ -1158,6 +1171,10 @@ Item {
     stderr: StdioCollector { id: actionErr; waitForEnd: true }
     onExited: function () {
       root.applyAction(String(actionOut.text || ""), String(actionErr.text || ""))
+      if (command[2] === "sync") {
+        var payload = root.payloadOf(String(actionOut.text || ""))
+        if (payload && payload.ok === true && !payload.warning) root.toast("Sync complete")
+      }
       // Deferred so the process slot is free again; one refresh when the queue
       // drains reconciles every optimistic edit at once.
       if (root._queue.length > 0) Qt.callLater(root.pump)
@@ -1228,6 +1245,11 @@ Item {
       var payload = root.payloadOf(String(habitsOut.text || ""))
       if (payload && payload.ok === true) root.applyHabits(payload)
       else if (payload && payload.message) root.errorText = String(payload.message)
+      if (root.manualHabitRefresh) {
+        root.toast(payload && payload.ok === true ? (payload.warning || "Habit list refreshed")
+                   : root.messageOf(payload, "", "Refresh failed. Try again."))
+        root.manualHabitRefresh = false
+      }
     }
   }
 

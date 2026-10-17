@@ -54,6 +54,19 @@ Item {
     when:false
     Component.onCompleted: console.log("ACCEPTANCE test case ready")
     function control(name) { var item=findChild(pane,name); verify(item !== null,name); return item }
+    function test_countdown_refresh_shortcuts() {
+      pane.datesOnly=true; backend.view="countdown"; pane.resource="countdown"
+      wait(20)
+      control("managementRefresh").forceActiveFocus()
+      var keys=[Qt.Key_R, Qt.Key_S]
+      for (var i=0; i<keys.length; i++) {
+        backend.calls=[]
+        keyClick(keys[i])
+        compare(backend.calls.length,1)
+        compare(backend.calls[0][0],"countdown")
+        compare(backend.calls[0][1],"list")
+      }
+    }
     function init() {
       pane.datesOnly=false; backend.view="manage"; pane.resource="habit"; pane.selectedId=""
       backend.calls=[]; backend.managementError=""; pane.operationWarning=""; flick.contentY=0
@@ -213,7 +226,7 @@ Item {
   Timer {
     interval:200; running:true
     onTriggered: {
-      var tests=["test_keyboard_resource_picker","test_create_from_keyboard","test_habit_detail_gate",
+      var tests=["test_countdown_refresh_shortcuts","test_keyboard_resource_picker","test_create_from_keyboard","test_habit_detail_gate",
         "test_project_switch_clears_task_and_confirmation","test_bulk_date_does_not_clear_priority",
         "test_assignment_uses_username","test_confirmation_cancel_and_keyboard_confirm",
         "test_focus_scrolls_action_into_view","test_empty_error_partial_failure","test_all_resources_and_widths",

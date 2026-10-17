@@ -108,6 +108,7 @@ Panel {
   readonly property bool showingHabits: tt.view === "habits"
   readonly property bool showingStats: tt.view === "stats"
   readonly property bool showingManagement: tt.view === "manage" || tt.view === "countdown"
+  readonly property bool showingShortcuts: tt.view === "manage" && !settingsHome && contextTitle === "Keyboard shortcuts"
   property string contextTitle: ""
   property bool settingsHome: false
   property bool settingsSection: false
@@ -140,6 +141,15 @@ Panel {
     settingsHome=true; settingsSection=false; contextTitle="Settings"
     managementPane.formFocus=false; detailPickerOpen=false
     tt.setView("manage")
+  }
+  function showShortcuts() {
+    if (tt.view !== "manage") { returnView=tt.view; returnProject=tt.projectFilter }
+    settingsHome=false; settingsSection=true; contextTitle="Keyboard shortcuts"
+    managementPane.formFocus=false; detailPickerOpen=false
+    tt.setView("manage")
+    managementFlick.contentY=0
+    focusPane="list"
+    keyCatcher.forceActiveFocus()
   }
   function openSettingsSection(title, resources) {
     widget.openTools(title,resources,null)
@@ -487,6 +497,14 @@ Panel {
 
   function refresh() { tt.refresh() }
 
+  function refreshCurrentView() {
+    if (showingShortcuts) return
+    if (showingManagement) managementPane.load()
+    else if (showingStats) tt.loadStats(true)
+    else if (showingHabits) tt.loadHabits(true)
+    else tt.refresh(true)
+  }
+
   // --- bar slot ---------------------------------------------------------
 
   visible: !hideWhenEmpty || !tt.loaded || !tt.authed || tt.badgeCount > 0
@@ -577,7 +595,7 @@ Panel {
     activeColor: widget.urgent
     tooltipText: "Dida 365 — " + widget.summary
     onPressed: function (buttonCode) {
-      if (buttonCode === Qt.RightButton) tt.refresh()
+      if (buttonCode === Qt.RightButton) widget.refreshCurrentView()
       else if (buttonCode === Qt.MiddleButton) { widget.open(); Qt.callLater(widget.openAdd) }
       else widget.toggle()
     }
@@ -616,12 +634,13 @@ Panel {
         id: keyCatcher
         anchors.fill: parent
         Keys.onReleased: function(event) {
-          if (!widget.showingStats || blocked || widget.focusPane !== "list") return
+          if ((!widget.showingStats && !widget.showingShortcuts) || blocked || widget.focusPane !== "list") return
+          var scrollPane = widget.showingShortcuts ? managementFlick : statsFlick
           if (event.key === Qt.Key_PageDown || event.key === Qt.Key_PageUp) {
-            statsFlick.scrollBy((event.key === Qt.Key_PageDown ? 1 : -1) * statsFlick.height * 0.8)
+            scrollPane.contentY = Math.max(0, Math.min(Math.max(0, scrollPane.contentHeight - scrollPane.height), scrollPane.contentY + (event.key === Qt.Key_PageDown ? 1 : -1) * scrollPane.height * 0.8))
             event.accepted = true
           } else if (event.key === Qt.Key_Home || event.key === Qt.Key_End) {
-            statsFlick.contentY = event.key === Qt.Key_Home ? 0 : Math.max(0, statsFlick.contentHeight - statsFlick.height)
+            scrollPane.contentY = event.key === Qt.Key_Home ? 0 : Math.max(0, scrollPane.contentHeight - scrollPane.height)
             event.accepted = true
           }
         }
@@ -641,6 +660,10 @@ Panel {
           }
           if (dx !== 0) { widget.cycleView(dx > 0 ? 1 : -1); return }
           if (dy === 0) return
+          if (widget.showingShortcuts) {
+            managementFlick.contentY = Math.max(0, Math.min(Math.max(0, managementFlick.contentHeight - managementFlick.height), managementFlick.contentY + dy * Style.space(48)))
+            return
+          }
           if (widget.showingStats) { statsFlick.scrollBy(dy * Style.space(48)); return }
           if (!widget.cursorActive) { widget.cursorActive = true; return }
           widget.moveCursor(dy)
@@ -683,7 +706,7 @@ Panel {
                                && !widget.showingHabits && !widget.showingStats)
                              widget.requestDelete(widget.selectedTask())
         onTabRequested: function (direction) {
-          if (widget.showingManagement && widget.focusPane === "list") { managementPane.focusForm(); return }
+          if (widget.showingManagement && !widget.settingsHome && !widget.showingShortcuts && widget.focusPane === "list") { managementPane.focusForm(); return }
           if (widget.showingStats && widget.focusPane === "list" && direction > 0 && statsPane.calendarDays.length) {
             statsPane.inspectCalendar()
             statsFlick.contentY = Math.max(0, Math.min(statsFlick.contentHeight - statsFlick.height, Style.space(200)))
@@ -704,11 +727,12 @@ Panel {
             widget.setView(widget.views[digit])
             return
           }
+          if (text === "?") { widget.showShortcuts(); return }
+          if (widget.showingShortcuts) return
           switch (text) {
-          case "r": case "R": if (widget.showingManagement) managementPane.load(); else if (widget.showingStats) tt.loadStats(true); else tt.refresh(); break
-          // Refresh is cache-first by design; this is how you say "go and look now",
-          // and it drains anything queued offline on the way.
-          case "s": case "S": if (widget.showingManagement) managementPane.load(); else if (widget.showingStats) tt.loadStats(true); else tt.sync(); break
+          case "r": case "R": widget.refreshCurrentView(); break
+          // Sync also drains anything queued offline before refreshing tasks.
+          case "s": case "S": if (widget.showingManagement) managementPane.load(); else if (widget.showingStats) tt.loadStats(true); else if (widget.showingHabits) tt.loadHabits(true); else tt.sync(); break
           // The list-only verbs stand down in a view with no rows: adding, sorting and
           // filtering a dashboard would do nothing the user could see.
           case "a": case "A": if (!widget.showingStats && !widget.showingManagement) widget.openAdd(); break
@@ -798,6 +822,7 @@ Panel {
                 + (filterBar.visible ? filterBar.implicitHeight + spacing : 0)
                 + (listFlick.visible ? Math.min(listColumn.implicitHeight, Style.space(430)) + spacing : 0)
                 + (statsFlick.visible ? Math.min(statsPane.implicitHeight, Style.space(430)) + spacing : 0)
+                + (widget.showingShortcuts ? Math.min(shortcutsPane.implicitHeight, Style.space(430)) + spacing : 0)
                 + (emptyState.visible ? emptyState.implicitHeight + spacing : 0)
                 + (statusLine.visible ? statusLine.implicitHeight + spacing : 0)
                 + (quickAddBar.visible ? quickAddBar.implicitHeight + spacing : 0)
@@ -807,14 +832,17 @@ Panel {
               Item {
                 id: paneHeader
                 width: parent.width
-                implicitHeight: Math.max(paneTitle.implicitHeight, paneCount.implicitHeight, paneTools.implicitHeight)
+                readonly property bool compact: width < Style.space(500)
+                implicitHeight: compact ? Math.max(paneTitle.implicitHeight, paneCount.implicitHeight) + Style.spacing.sm + paneTools.implicitHeight
+                                        : Math.max(paneTitle.implicitHeight, paneCount.implicitHeight, paneTools.implicitHeight)
 
                 Text {
                   id: paneTitle
                   anchors.left: parent.left
-                  anchors.right: paneCount.visible ? paneCount.left : paneTools.left
+                  anchors.right: paneCount.visible ? paneCount.left : paneHeader.compact ? parent.right : paneTools.left
                   anchors.rightMargin: Style.spacing.sm
-                  anchors.verticalCenter: parent.verticalCenter
+                  anchors.verticalCenter: paneHeader.compact ? undefined : parent.verticalCenter
+                  anchors.top: paneHeader.compact ? parent.top : undefined
                   text: widget.viewLabel()
                   textFormat: Text.PlainText
                   color: widget.foreground
@@ -827,9 +855,9 @@ Panel {
                 Text {
                   id: paneCount
                   visible: text !== ""
-                  anchors.right: paneTools.left
+                  anchors.right: paneHeader.compact ? parent.right : paneTools.left
                   anchors.rightMargin: Style.spacing.md
-                  anchors.verticalCenter: parent.verticalCenter
+                  anchors.verticalCenter: paneTitle.verticalCenter
                   text: widget.paneCount > 0 ? String(widget.paneCount) : ""
                   color: widget.dim
                   font.family: widget.fontFamily
@@ -839,7 +867,8 @@ Panel {
                 Row {
                   id: paneTools
                   anchors.right: parent.right
-                  anchors.verticalCenter: parent.verticalCenter
+                  anchors.verticalCenter: paneHeader.compact ? undefined : parent.verticalCenter
+                  anchors.bottom: paneHeader.compact ? parent.bottom : undefined
                   spacing: Style.spacing.xs
 
                   Button {
@@ -880,6 +909,17 @@ Panel {
                     fontFamily: widget.fontFamily
                     focusable: true
                     onClicked: widget.setView(tt.view === "tomorrow" ? "next" : "tomorrow")
+                  }
+
+                  Button {
+                    objectName: "listRefresh"
+                    visible: !widget.showingManagement && !widget.showingStats
+                    text: tt.manualRefreshing ? I18n.tr("Refreshing…") : I18n.tr("Refresh")
+                    enabled: !tt.manualRefreshing
+                    foreground: widget.foreground
+                    fontFamily: widget.fontFamily
+                    focusable: true
+                    onClicked: { widget.refreshCurrentView(); widget.reclaimKeys() }
                   }
 
                   Button {
@@ -1190,12 +1230,13 @@ Panel {
                 height: visible ? Math.max(0, mainColumn.height - paneHeader.implicitHeight - paneRule.height
                   - (statusLine.visible ? statusLine.implicitHeight + mainColumn.spacing : 0) - mainColumn.spacing * 3) : 0
                 contentWidth: width
-                contentHeight: managementPane.implicitHeight
+                contentHeight: widget.showingShortcuts ? shortcutsPane.implicitHeight : managementPane.implicitHeight
                 clip: true
                 boundsBehavior: Flickable.StopAtBounds
                 ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
                 ManagePane {
                   id: managementPane
+                  visible: !widget.showingShortcuts
                   width: parent.width
                   service: tt
                   contextual:true
@@ -1206,6 +1247,15 @@ Panel {
                   onDatesOnlyChanged: if (datesOnly) load()
                   onEditingChanged: widget.detailPickerOpen = editing
                   onReturnToPanel: { if (tt.view === "manage") widget.closeTools(); else keyCatcher.forceActiveFocus() }
+                }
+                ShortcutsPane {
+                  id: shortcutsPane
+                  visible: widget.showingShortcuts
+                  width: parent.width
+                  viewOptions: widget.viewOptions
+                  showFocus: tt.showFocus
+                  foreground: widget.foreground
+                  fontFamily: widget.fontFamily
                 }
               }
 
@@ -1231,6 +1281,15 @@ Panel {
                   focusable: true
                   onClicked: widget.openSettingsSection("List settings",["project","folder","tag","column"])
                 }
+                Button {
+                  objectName: "settingsShortcuts"
+                  text: I18n.tr("Keyboard shortcuts") + "  ?"
+                  width: parent.width
+                  leftAlign: true
+                  foreground: widget.foreground
+                  focusable: true
+                  onClicked: widget.showShortcuts()
+                }
               }
 
               Text {
@@ -1253,10 +1312,10 @@ Panel {
 
               Text {
                 id: statusLine
-                visible: tt.authed && (tt.actionStatus !== "" || tt.errorText !== "")
+                visible: tt.authed && (tt.manualRefreshing || tt.actionStatus !== "" || tt.errorText !== "")
                 width: parent.width
-                text: tt.actionStatus !== "" ? tt.actionStatus : tt.errorText
-                color: tt.actionStatus !== "" ? widget.dim : widget.urgent
+                text: tt.manualRefreshing ? I18n.tr("Refreshing…") : tt.actionStatus !== "" ? tt.actionStatus : tt.errorText
+                color: tt.manualRefreshing || tt.actionStatus !== "" ? widget.dim : widget.urgent
                 font.family: widget.fontFamily
                 font.pixelSize: Style.font.bodySmall
                 wrapMode: Text.WordWrap

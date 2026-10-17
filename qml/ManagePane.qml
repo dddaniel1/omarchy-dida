@@ -47,6 +47,13 @@ Column {
     || dueField.activeFocus || colorField.activeFocus || folderPicker.popupOpen || root.formFocus
   activeFocusOnTab: true
   signal returnToPanel()
+  Keys.onPressed: function(event) {
+    if (datesOnly && (event.key === Qt.Key_R || event.key === Qt.Key_S)
+        && !(event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier))) {
+      if (!service.managementBusy) load()
+      event.accepted = true
+    }
+  }
   Keys.onEscapePressed: { confirmation=""; formFocus=false; returnToPanel() }
   function focusForm() {
     formFocus=true

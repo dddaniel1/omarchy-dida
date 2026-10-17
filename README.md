@@ -227,14 +227,17 @@ See [additional API features and CLI examples](docs/API-FEATURES.md).
 
 ### Keyboard
 
-The popup is fully keyboard-driven — the mouse is optional.
+The popup is fully keyboard-driven — the mouse is optional. Open **Settings → Keyboard shortcuts**
+or press <kbd>?</kbd> for the in-panel reference, including the current view-number mapping.
 
 | Key | Action |
 |---|---|
 | <kbd>↑</kbd> <kbd>↓</kbd> / <kbd>k</kbd> <kbd>j</kbd> | move the cursor |
 | <kbd>Enter</kbd> | complete the task under the cursor |
 | <kbd>Space</kbd> | expand / collapse its detail |
-| <kbd>←</kbd> <kbd>→</kbd> / <kbd>Tab</kbd> | switch view |
+| <kbd>←</kbd> <kbd>→</kbd> / <kbd>h</kbd> <kbd>l</kbd> | switch view; right arrow leaves the sidebar |
+| <kbd>Tab</kbd> / <kbd>Shift+Tab</kbd> | switch between list and sidebar; enter forms or the statistics calendar |
+| <kbd>?</kbd> | open keyboard shortcuts |
 | <kbd>1</kbd>–<kbd>8</kbd> | jump to a view — Today, Tomorrow, Next 7, Inbox, All, Done, Habits, Stats; the digits follow the sidebar, so hiding Habits or Stats drops them out |
 | <kbd>a</kbd> | quick-add |
 | <kbd>/</kbd> | search |
@@ -243,12 +246,13 @@ The popup is fully keyboard-driven — the mouse is optional.
 | <kbd>p</kbd> | cycle priority |
 | <kbd>P</kbd> | start / pause / resume the focus timer |
 | <kbd>x</kbd> / <kbd>d</kbd> | delete (with confirmation) |
-| <kbd>r</kbd> | refresh from the cache |
-| <kbd>s</kbd> | sync — push anything queued and refetch now |
+| <kbd>r</kbd> | refresh the current task, habit, or important-date list now |
+| <kbd>s</kbd> | sync tasks — push anything queued and refetch; refresh habits or important dates |
 | <kbd>Esc</kbd> | back out one layer, then close |
 
-<kbd>r</kbd> and <kbd>s</kbd> differ on purpose: reads are cache-first, so <kbd>r</kbd>
-is instant and may serve what it already has. <kbd>s</kbd> is how you say *go and look*.
+Task, habit, and important-date lists also have a **Refresh** button with a loading
+state. Manual task and habit refreshes bypass the cache; automatic reads remain
+cache-first. <kbd>s</kbd> additionally pushes queued task changes.
 
 ### Habits
 

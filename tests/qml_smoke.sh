@@ -167,6 +167,15 @@ ShellRoot {
           }
           return null
         }
+        function findHelp(item) {
+          if (item.objectName === "shortcutsPane") return item
+          var children = item.children || []
+          for (var i = 0; i < children.length; i++) {
+            var found = findHelp(children[i])
+            if (found) return found
+          }
+          return null
+        }
         var nav = findSidebar(subject.panel.contentItem[0])
         if (nav) {
           subject.setView("tomorrow")
@@ -202,11 +211,38 @@ ShellRoot {
           nav.moveCursor(1); nav.moveCursor(1); nav.moveCursor(1)
           console.log("SMOKE sidebarStep=" + (nav.selectable(nav.cursorIndex) ? "ok" : "bad"))
           subject.focusList()
+          var previousView = subject.service.view
+          subject.showShortcuts()
+          var help = findHelp(subject.panel.contentItem[0])
+          console.log("SMOKE shortcuts=" + (subject.showingShortcuts && help && help.visible
+            && help.viewOptions.length === subject.viewOptions.length && subject.rowCount === 0))
+          subject.dismiss()
+          console.log("SMOKE shortcutsBack=" + subject.settingsHome)
+          subject.dismiss()
+          console.log("SMOKE shortcutsReturn=" + (subject.service.view === previousView))
         }
         // Every view, in the order the number keys walk them.
         for (var i = 0; i < subject.views.length; i++) subject.setView(subject.views[i])
         subject.setView("habits")
         console.log("SMOKE habitTaskView=" + subject.service.readArgs()[2])
+        function findRefresh(item) {
+          if (item.objectName === "listRefresh") return item
+          var children = item.children || []
+          for (var i=0; i<children.length; i++) {
+            var found=findRefresh(children[i])
+            if (found) return found
+          }
+          return null
+        }
+        var refreshButton=findRefresh(subject.panel.contentItem[0])
+        refreshButton.clicked()
+        console.log("SMOKE refreshButtons=" + subject.service.manualHabitRefresh)
+        console.log("SMOKE habitRefreshFeedback=" + subject.service.manualHabitRefresh)
+        subject.setView("all")
+        subject.service.paused = true
+        refreshButton.clicked()
+        console.log("SMOKE taskRefreshFeedback=" + subject.service.manualTaskRefresh)
+        subject.service.paused = false
         subject.cycleView(1); subject.cycleView(-1)
         subject.moveCursor(1); subject.moveCursor(-1)
         subject.openSearch(); subject.closeSearch(true)
@@ -453,6 +489,9 @@ grep -q "SMOKE sidebarCursor=sidebar:ok" "$WORK/clean.log" || fail "the sidebar 
 grep -q "SMOKE preview=true" "$WORK/clean.log" || fail "moving the sidebar cursor did not preview the list"
 grep -q "SMOKE sidebarStep=ok" "$WORK/clean.log" || fail "the sidebar cursor stepped onto a header or off the end"
 grep -q "SMOKE habitTaskView=all" "$WORK/clean.log" || fail "habit view reached the task CLI"
+for marker in habitRefreshFeedback taskRefreshFeedback refreshButtons; do
+  grep -q "SMOKE $marker=true" "$WORK/clean.log" || fail "manual refresh feedback missing: $marker"
+done
 # The Stats view must actually render its dashboard — the trend over the completed
 # window, and the open work grouped by list — not merely exist in the view list.
 grep -q "SMOKE stats view=stats days=7 trend=7 lists=3" "$WORK/clean.log" \
@@ -482,5 +521,9 @@ grep -q "SMOKE donekept=true restoring=true" "$WORK/clean.log" \
   || { cat "$WORK/clean.log"; fail "a finished task was completed again"; }
 grep -q "SMOKE settings hideWhenEmpty=false showProjectChips=true confirmDelete=true" \
   "$WORK/clean.log" || fail "string settings were not coerced to booleans"
+
+grep -q "SMOKE shortcuts=true" "$WORK/clean.log" || fail "shortcut page did not open"
+grep -q "SMOKE shortcutsBack=true" "$WORK/clean.log" || fail "shortcut page did not return to settings"
+grep -q "SMOKE shortcutsReturn=true" "$WORK/clean.log" || fail "shortcut page lost previous view"
 
 printf '\033[32mOK\033[0m   QML loads, renders and drives cleanly\n'
