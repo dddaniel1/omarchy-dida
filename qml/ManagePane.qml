@@ -28,6 +28,10 @@ Column {
   property var confirmationArgs: []
   property string selectedDescription: ""
   property bool formFocus: false
+  property string habitNotice: ""
+  readonly property bool validHabit: nameField.text.trim() !== "" && (habitMode.value === "complete"
+    || (goalField.acceptableInput && stepField.acceptableInput
+        && Number(goalField.text) > 0 && Number(stepField.text) > 0))
   readonly property var resources: [
     {value:"habit", label:I18n.tr("Habits")}, {value:"batch", label:I18n.tr("Tasks in bulk")},
     {value:"tag", label:I18n.tr("Tags")}, {value:"folder", label:I18n.tr("List folders")},
@@ -41,7 +45,7 @@ Column {
     ? service.management.result : null
   readonly property var records: entries
   readonly property bool editing: nameField.activeFocus || textField.activeFocus || goalField.activeFocus
-    || unitField.activeFocus || repeatField.activeFocus || startField.activeFocus || endField.activeFocus
+    || unitField.activeFocus || startField.activeFocus || endField.activeFocus
     || stepField.activeFocus || resourcePicker.popupOpen || projectPicker.popupOpen || taskPicker.popupOpen
     || priorityPicker.popupOpen || typePicker.popupOpen || repeatPicker.popupOpen
     || dueField.activeFocus || colorField.activeFocus || folderPicker.popupOpen || root.formFocus
@@ -63,8 +67,9 @@ Column {
   }
   function openResource(name, task) {
     resetScope()
+    resetHabit()
     priorityPicker.value="keep";dueField.text=""
-    nameField.text="";textField.text="";goalField.text="1";stepField.text="1";unitField.text="";repeatPicker.value="daily"
+    textField.text=""
     resource = name
     if (task) {
       contextProject=String(task.projectId || "")
@@ -86,6 +91,18 @@ Column {
   }
   spacing: Style.spacing.md
 
+  function resetHabit() {
+    nameField.text=""; goalField.text="1"; stepField.text="1"; unitField.text=""
+    habitMode.value="complete"; repeatPicker.value="daily"; habitNotice=""
+  }
+  function habitFields(item) {
+    goalField.text=String(item.goal || 1); stepField.text=String(item.step || 1)
+    unitField.text=String(item.unit || "")
+    habitMode.value=Number(item.goal || 1) > 1 || Number(item.step || 1) < Number(item.goal || 1) || item.unit ? "quantity" : "complete"
+    var rules={"RRULE:FREQ=DAILY;INTERVAL=1":"daily","RRULE:FREQ=WEEKLY;INTERVAL=1":"weekly","RRULE:FREQ=MONTHLY;INTERVAL=1":"monthly"}
+    repeatPicker.value=rules[item.repeatRule] || "custom"
+  }
+
   function base(action) {
     var args = [resource, action]
     if (projectPicker.value) args = args.concat(["--project", projectPicker.value])
@@ -105,12 +122,15 @@ Column {
     service.manage(args)
   }
   function save(action) {
+    if (service.managementBusy || (resource === "habit" && (!validHabit || (action === "edit" && !detailReady)))) return
     if ((resource === "comment" || resource === "assignment") && !validTask()) return
     var args = base(action)
     if (nameField.visible) args = args.concat(["--name", nameField.text.trim()])
     if (resource === "habit") {
-      args = args.concat(["--goal", goalField.text, "--step", stepField.text,
-                          "--unit", unitField.text])
+      habitNotice=""
+      args = args.concat(["--goal", habitMode.value === "complete" ? "1" : goalField.text,
+                          "--step", habitMode.value === "complete" ? "1" : stepField.text,
+                          "--unit", habitMode.value === "complete" ? "" : unitField.text.trim()])
       if (repeatPicker.value !== "custom") args = args.concat(["--repeat",repeatPicker.value])
     }
     if (resource === "comment" || (resource === "batch" && action === "add"))
@@ -142,12 +162,8 @@ Column {
     if (resource === "comment") selectedDescription = String(item.title || "")
     nameField.text = String(item.name || item.label || "")
     if (resource === "habit") {
-      goalField.text = String(item.goal || 1)
-      stepField.text = String(item.step || 1)
-      unitField.text = String(item.unit || "")
-      repeatField.text = String(item.repeatRule || "RRULE:FREQ=DAILY;INTERVAL=1")
-      var rules = {"RRULE:FREQ=DAILY;INTERVAL=1":"daily","RRULE:FREQ=WEEKLY;INTERVAL=1":"weekly","RRULE:FREQ=MONTHLY;INTERVAL=1":"monthly"}
-      repeatPicker.value = rules[repeatField.text] || "custom"
+      habitNotice=""
+      habitFields(item)
       service.manage(["habit", "get", "--id", selectedId])
     }
     if (resource === "focus-record") service.manage(base("get").concat(["--type",typePicker.value]))
@@ -164,6 +180,7 @@ Column {
     selectedId = ""; selectedIds = []; confirmation = ""; entries = []; nameField.text = ""
     textField.text = ""; goalField.text = "1"; stepField.text = "1"; unitField.text = ""
     repeatPicker.value = "daily"
+    habitMode.value="complete"; habitNotice=""
     if (contextual && contextProject) {
       projectPicker.value=contextProject
       taskPicker.value=contextTask
@@ -183,10 +200,7 @@ Column {
         if (String(item.id || "") !== root.selectedId) return
         if (root.resource === "habit") {
           nameField.text = String(item.name || "")
-          goalField.text = String(item.goal || 1); stepField.text = String(item.step || 1)
-          unitField.text = String(item.unit || "")
-          var rules = {"RRULE:FREQ=DAILY;INTERVAL=1":"daily","RRULE:FREQ=WEEKLY;INTERVAL=1":"weekly","RRULE:FREQ=MONTHLY;INTERVAL=1":"monthly"}
-          repeatPicker.value = rules[item.repeatRule] || "custom"
+          root.habitFields(item)
         }
         if (root.resource === "project") {
           nameField.text = String(item.name || ""); colorField.text = String(item.color || "")
@@ -199,6 +213,11 @@ Column {
       }
       else if (payload.action !== "get" && payload.resource !== "revoke") {
         root.operationWarning = String(payload.warning || "")
+        if (root.resource === "habit" && !payload.warning) {
+          root.resetHabit()
+          root.habitNotice=I18n.tr(payload.action === "add" ? "Habit added" : "Habit updated")
+          Qt.callLater(function(){ nameField.forceActiveFocus() })
+        }
         var failed = (payload.result || {}).failed || Object.keys((payload.result || {}).id2error || {})
         root.selectedIds = failed; root.selectedId = ""; root.load()
       }
@@ -376,7 +395,7 @@ Column {
       + (delta === 0 ? " · Today" : delta > 0 ? " · In " + delta + " days" : " · " + (-delta) + " days ago")
   }
   Text {
-    visible: root.result !== null && root.records.length === 0 && ["countdown","comment","folder","habit","tag","column","focus-record","undone"].indexOf(root.resource) >= 0
+    visible: !(root.contextual && root.resource === "habit") && root.result !== null && root.records.length === 0 && ["countdown","comment","folder","habit","tag","column","focus-record","undone"].indexOf(root.resource) >= 0
     text: I18n.tr("No entries yet.")
     color: root.foreground
     font.family: root.fontFamily
@@ -393,10 +412,23 @@ Column {
     objectName: "managementName"
     visible: ["habit","tag","folder","column","project"].indexOf(root.resource) >= 0
     width: parent.width
-    placeholderText: I18n.tr("Name")
+    placeholderText: root.resource === "habit" ? I18n.tr("Habit name, e.g. Go to bed early") : I18n.tr("Name")
+    enabled: !root.service.managementBusy && (root.resource !== "habit" || !root.selectedId || root.detailReady)
     foreground: root.foreground
     font.family: root.fontFamily
     maximumLength: 1000
+    onAccepted: {
+      if (root.resource === "habit") root.save(root.selectedId ? "edit" : "add")
+    }
+  }
+  Text {
+    objectName: "habitNotice"
+    visible: root.resource === "habit" && root.habitNotice !== ""
+    width: parent.width
+    text: root.habitNotice
+    color: root.foreground
+    wrapMode: Text.WordWrap
+    font.family: root.fontFamily
   }
   TextField {
     id:colorField; visible:root.resource === "project"; width:parent.width
@@ -412,23 +444,67 @@ Column {
     visible: root.resource === "habit"
     width: parent.width
     spacing: Style.spacing.sm
+    enabled: !root.service.managementBusy && (!root.selectedId || root.detailReady)
     Column {
+      id:habitMode
+      objectName:"habitMode"
+      property string value:"complete"
+      width:parent.width
+      spacing:Style.spacing.xs
+      Text { text:I18n.tr("Check-in goal"); color:root.foreground; font.family:root.fontFamily; font.pixelSize:Style.font.caption }
+      Row {
+        width:parent.width
+        spacing:Style.spacing.sm
+        Button {
+          objectName:"habitCompleteMode"
+          width:(parent.width-Style.spacing.sm)/2
+          text:I18n.tr("Complete once"); selected:habitMode.value === "complete"
+          foreground:root.foreground; fontFamily:root.fontFamily; focusable:true
+          onClicked:habitMode.value="complete"
+        }
+        Button {
+          objectName:"habitQuantityMode"
+          width:(parent.width-Style.spacing.sm)/2
+          text:I18n.tr("Reach a quantity"); selected:habitMode.value === "quantity"
+          foreground:root.foreground; fontFamily:root.fontFamily; focusable:true
+          onClicked:habitMode.value="quantity"
+        }
+      }
+    }
+    Column {
+      visible: habitMode.value === "quantity"
       width:(parent.width - Style.spacing.sm) / 2
       spacing:Style.spacing.xs
       Text { text:I18n.tr("Goal"); color:root.foreground; font.family:root.fontFamily; font.pixelSize:Style.font.caption }
-      TextField { id:goalField; width:parent.width; text:"1"; placeholderText:I18n.tr("e.g. 8"); foreground:root.foreground }
+      TextField {
+        id:goalField; objectName:"habitGoal"; width:parent.width; text:"1"
+        placeholderText:I18n.tr("e.g. 8"); foreground:root.foreground
+        validator:DoubleValidator { bottom:0; locale:"C"; notation:DoubleValidator.StandardNotation }
+        inputMethodHints:Qt.ImhFormattedNumbersOnly
+      }
     }
     Column {
+      visible: habitMode.value === "quantity"
       width:(parent.width - Style.spacing.sm) / 2
       spacing:Style.spacing.xs
       Text { text:I18n.tr("Per check-in"); color:root.foreground; font.family:root.fontFamily; font.pixelSize:Style.font.caption }
-      TextField { id:stepField; width:parent.width; text:"1"; placeholderText:I18n.tr("e.g. 1"); foreground:root.foreground }
+      TextField {
+        id:stepField; objectName:"habitStep"; width:parent.width; text:"1"
+        placeholderText:I18n.tr("e.g. 1"); foreground:root.foreground
+        validator:DoubleValidator { bottom:0; locale:"C"; notation:DoubleValidator.StandardNotation }
+        inputMethodHints:Qt.ImhFormattedNumbersOnly
+      }
     }
-    TextField { id:unitField; width:parent.width; placeholderText:I18n.tr("Unit (optional, e.g. glasses)"); foreground:root.foreground }
-    TextField { id:repeatField; visible:false; text:"RRULE:FREQ=DAILY;INTERVAL=1" }
+    TextField { id:unitField; objectName:"habitUnit"; visible:habitMode.value === "quantity"; width:parent.width; placeholderText:I18n.tr("Unit (optional, e.g. glasses)"); foreground:root.foreground }
+    Text {
+      visible: habitMode.value === "quantity"
+      width:parent.width
+      text:root.validHabit || !nameField.text.trim() ? I18n.tr("Each check-in adds the amount above toward your goal.") : I18n.tr("Enter a goal and check-in amount greater than zero.")
+      color:root.foreground; wrapMode:Text.WordWrap; font.family:root.fontFamily; font.pixelSize:Style.font.bodySmall
+    }
     Dropdown {
       id:repeatPicker; width:parent.width; label:I18n.tr("Repeat"); value:"daily"
-      options:[{value:"daily",label:I18n.tr("Daily")},{value:"weekly",label:I18n.tr("Weekly")},{value:"monthly",label:I18n.tr("Monthly")},{value:"custom",label:I18n.tr("Keep existing schedule")}]
+      options:[{value:"daily",label:I18n.tr("Daily")},{value:"weekly",label:I18n.tr("Weekly")},{value:"monthly",label:I18n.tr("Monthly")}].concat(root.selectedId ? [{value:"custom",label:I18n.tr("Keep existing schedule")}] : [])
       foreground:root.foreground
     }
   }
@@ -467,8 +543,8 @@ Column {
       objectName: "managementCreate"
       visible: ["habit","tag","folder","column","comment","batch"].indexOf(root.resource) >= 0
         && !(root.contextual && root.resource === "habit" && root.selectedId !== "")
-      text: root.resource === "comment" ? I18n.tr("Add comment") : root.resource === "batch" ? I18n.tr("Add tasks") : I18n.tr("Create")
-      enabled: nameField.visible ? nameField.text.trim() !== "" : textField.text.trim() !== ""
+      text: root.resource === "habit" ? (root.service.managementBusy ? I18n.tr("Saving…") : I18n.tr("Add habit")) : root.resource === "comment" ? I18n.tr("Add comment") : root.resource === "batch" ? I18n.tr("Add tasks") : I18n.tr("Create")
+      enabled: root.resource === "habit" ? root.validHabit : nameField.visible ? nameField.text.trim() !== "" : textField.text.trim() !== ""
       foreground: root.foreground
       onClicked: root.save("add")
     }
@@ -479,7 +555,7 @@ Column {
         && !(root.contextual && root.resource === "habit" && root.selectedId === "")
       text: root.resource === "assignment" ? I18n.tr("Assign") : I18n.tr("Save changes")
       enabled: root.resource === "batch" ? root.selectedIds.length > 0
-        : root.resource === "project" || root.resource === "habit" ? root.detailReady : root.selectedId !== ""
+        : root.resource === "habit" ? root.detailReady && root.validHabit : root.resource === "project" ? root.detailReady : root.selectedId !== ""
       foreground: root.foreground
       onClicked: root.save("edit")
     }
@@ -506,7 +582,7 @@ Column {
         if (root.resource === "focus-record") root.confirmationArgs = root.confirmationArgs.concat(["--type",typePicker.value])
       }
     }
-    Button { focusable:true; visible:root.selectedId !== ""; text:I18n.tr("Cancel edit"); foreground:root.foreground; onClicked:{root.selectedId="";root.detailReady=false;nameField.text=""} }
+    Button { objectName:"managementCancel"; focusable:true; visible:root.selectedId !== ""; text:I18n.tr("Cancel edit"); foreground:root.foreground; onClicked:{root.selectedId="";root.detailReady=false;nameField.text="";if(root.resource === "habit") root.resetHabit()} }
   }
   Flow {
     visible: root.confirmation !== ""

@@ -18,8 +18,9 @@ def register(cmd):
                                        "focus-record", "preference", "undone", "batch", "revoke"))
     p.add_argument("action", choices=("list", "get", "add", "edit", "delete", "complete", "revoke"))
     for key in ("id", "project", "task", "name", "content", "username", "color", "repeat",
-                "unit", "section", "start", "end", "ids", "group"):
+                "section", "start", "end", "ids", "group"):
         p.add_argument("--" + key, default="")
+    p.add_argument("--unit", default=None)
     p.add_argument("--goal", type=float, default=None)
     p.add_argument("--step", type=float, default=None)
     p.add_argument("--priority", type=int, choices=(0, 1, 3, 5), default=None)
@@ -62,9 +63,11 @@ def run(args):
         elif action in ("add", "edit"):
             fields = {}
             for flag, field in (("name", "name"), ("color", "color"), ("repeat", "repeatRule"),
-                                ("unit", "unit"), ("section", "sectionId")):
+                                ("section", "sectionId")):
                 if getattr(args, flag):
                     fields[field] = getattr(args, flag)
+            if args.unit is not None:
+                fields["unit"] = args.unit
             if args.repeat:
                 from .cli import _repeat
                 fields["repeatRule"] = _repeat(args.repeat)

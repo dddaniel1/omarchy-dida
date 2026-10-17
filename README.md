@@ -264,6 +264,11 @@ finished day un-finishes it. A habit outside its own repeat rule is dimmed and m
 `not today` rather than hidden, so a weekly habit does not look deleted on the other six
 days.
 
+Choose **Add habit**, enter a name, and press <kbd>Enter</kbd> to create a daily,
+finish-in-one habit. Choose **Reach a quantity** for a goal, amount per check-in,
+and optional unit. Saving clears the form only after success; a failed request
+keeps your input for retrying. Editing preserves an existing custom schedule.
+
 The bar counts open habits beside the task count: `3  2♦` is three tasks due and two
 habits still open. The `<kbd>1</kbd>`–`<kbd>8</kbd>` shortcut and the tab only appear
 when `showHabits` is on.

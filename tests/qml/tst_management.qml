@@ -71,6 +71,7 @@ Item {
       pane.datesOnly=false; backend.view="manage"; pane.resource="habit"; pane.selectedId=""
       backend.calls=[]; backend.managementError=""; pane.operationWarning=""; flick.contentY=0
       backend.deferDetails=false
+      backend.managementBusy=false; pane.resetHabit()
       pane.contextual=false;pane.contextResources=[];pane.initialSelection=[]
       wait(20)
     }
@@ -112,6 +113,61 @@ Item {
       pane.save("edit")
       var sent=backend.calls.filter(function(c){return c[1]==="edit"})[0]
       compare(sent[sent.indexOf("--goal")+1],"8")
+    }
+    function test_habit_simple_enter_and_success() {
+      pane.contextual=true; pane.openResource("habit",null); wait(20)
+      var name=control("managementName")
+      compare(control("habitMode").value,"complete")
+      verify(!control("habitGoal").visible)
+      name.text="早睡"; name.forceActiveFocus(); keyClick(Qt.Key_Return)
+      var sent=backend.calls.filter(function(c){return c[1]==="add"})[0]
+      compare(sent[sent.indexOf("--goal")+1],"1")
+      compare(sent[sent.indexOf("--step")+1],"1")
+      compare(name.text,"")
+      compare(control("habitNotice").text,I18n.tr("Habit added"))
+    }
+    function test_habit_quantity_validation_and_retry() {
+      pane.contextual=true; pane.openResource("habit",null); wait(20)
+      var quantity=control("habitQuantityMode")
+      verify(quantity.visible)
+      verify(control("habitCompleteMode").visible)
+      quantity.forceActiveFocus(); keyClick(Qt.Key_Return)
+      compare(control("habitMode").value,"quantity")
+      verify(control("habitGoal").visible)
+      control("managementName").text="喝水"
+      control("habitGoal").text="0"
+      verify(!control("managementCreate").enabled)
+      var before=backend.calls.length
+      pane.save("add"); compare(backend.calls.length,before)
+      control("habitGoal").text="8"; control("habitStep").text=""
+      verify(!control("managementCreate").enabled)
+      control("habitStep").text="0.5"; control("habitUnit").text="杯"
+      verify(control("managementCreate").enabled)
+      backend.managementBusy=true
+      pane.save("add"); compare(backend.calls.length,before)
+      backend.managementError="Try again"
+      backend.managementBusy=false
+      compare(control("managementName").text,"喝水")
+      compare(control("habitGoal").text,"8")
+      pane.save("add")
+      var sent=backend.calls.filter(function(c){return c[1]==="add"})[0]
+      compare(sent[sent.indexOf("--step")+1],"0.5")
+      compare(sent[sent.indexOf("--unit")+1],"杯")
+      compare(control("habitMode").value,"complete")
+    }
+    function test_habit_custom_schedule_preserved_and_cancel_resets() {
+      backend.deferDetails=true
+      pane.choose({id:"h",name:"Read"})
+      backend.management={resource:"habit",action:"get",result:{id:"h",name:"Read",goal:20,step:5,unit:"pages",repeatRule:"RRULE:FREQ=WEEKLY;BYDAY=MO,WE,FR"}}
+      compare(control("habitMode").value,"quantity")
+      pane.save("edit")
+      var sent=backend.calls.filter(function(c){return c[1]==="edit"})[0]
+      compare(sent.indexOf("--repeat"),-1)
+      pane.choose({id:"h",name:"Water",goal:8,unit:"cups"})
+      control("managementCancel").clicked()
+      compare(control("habitMode").value,"complete")
+      compare(control("habitGoal").text,"1")
+      compare(control("habitUnit").text,"")
     }
     function test_project_switch_clears_task_and_confirmation() {
       pane.openResource("comment",backend.tasks[0]); wait(20)
@@ -227,6 +283,7 @@ Item {
     interval:200; running:true
     onTriggered: {
       var tests=["test_countdown_refresh_shortcuts","test_keyboard_resource_picker","test_create_from_keyboard","test_habit_detail_gate",
+        "test_habit_simple_enter_and_success","test_habit_quantity_validation_and_retry","test_habit_custom_schedule_preserved_and_cancel_resets",
         "test_project_switch_clears_task_and_confirmation","test_bulk_date_does_not_clear_priority",
         "test_assignment_uses_username","test_confirmation_cancel_and_keyboard_confirm",
         "test_focus_scrolls_action_into_view","test_empty_error_partial_failure","test_all_resources_and_widths",
@@ -241,15 +298,24 @@ Item {
   Timer {
     id:captureStep
     property int step:0
+    readonly property var names:["manage-680-top","manage-680-bottom","manage-600-top","manage-600-bottom","dates","habit-420-simple","habit-420-quantity","habit-680-quantity"]
     interval:150
     onTriggered: {
-      var names=["manage-680-top","manage-680-bottom","manage-600-top","manage-600-bottom","dates"]
       if (step>=names.length) { console.log("ACCEPTANCE COMPLETE"); Qt.callLater(Qt.quit); return }
-      flick.anchors.fill=undefined; flick.width=(step<2?680:600)-32; flick.height=388
+      flick.anchors.fill=undefined; flick.width=(step<2 || step===7 ? 680 : step>=5 ? 420 : 600)-32; flick.height=388
       pane.datesOnly=step===4; backend.view=step===4?"countdown":"manage"
       pane.resource=step===4?"countdown":"habit"; pane.load()
+      if (step>=5) {
+        pane.contextual=true; pane.openResource("habit",null)
+        acceptance.control("managementName").text=step===5 ? I18n.tr("Go to bed early") : I18n.tr("Drink water")
+        if (step>=6) {
+          acceptance.control("habitMode").value="quantity"
+          acceptance.control("habitGoal").text="8"
+          acceptance.control("habitUnit").text=I18n.tr("glasses")
+        }
+      }
       Qt.callLater(function(){
-        flick.contentY=step%2===1?Math.max(0,flick.contentHeight-flick.height):0
+        flick.contentY=step<5 && step%2===1?Math.max(0,flick.contentHeight-flick.height):0
         captureReady.restart()
       })
     }
@@ -257,11 +323,10 @@ Item {
   Timer {
     id:captureReady; interval:100
     onTriggered: {
-      var names=["manage-680-top","manage-680-bottom","manage-600-top","manage-600-bottom","dates"]
       flick.grabToImage(function(image){
-        var path=Qt.resolvedUrl("captures/"+names[captureStep.step]+".png").toString().replace("file://","")
+        var path=Qt.resolvedUrl("captures/"+captureStep.names[captureStep.step]+".png").toString().replace("file://","")
         if (!image.saveToFile(path)) { console.error("ACCEPTANCE FAIL capture"); Qt.callLater(Qt.quit); return }
-        console.log("ACCEPTANCE CAPTURE "+names[captureStep.step]); captureStep.step++; captureStep.restart()
+        console.log("ACCEPTANCE CAPTURE "+captureStep.names[captureStep.step]); captureStep.step++; captureStep.restart()
       })
     }
   }

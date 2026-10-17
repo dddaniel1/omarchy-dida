@@ -17,6 +17,11 @@ function dateLabel(text) {
 }
 
 var zh = {
+  "Check-in goal":"打卡目标", "Complete once":"一次完成", "Reach a quantity":"按数量打卡",
+  "Habit name, e.g. Go to bed early":"习惯名称，例如：早睡",
+  "Each check-in adds the amount above toward your goal.":"每次打卡会累加上述数量，直到达成目标。",
+  "Enter a goal and check-in amount greater than zero.":"目标量和每次打卡量都需填写大于 0 的数字。",
+  "Habit added":"习惯已添加", "Habit updated":"习惯已更新", "Saving…":"正在保存…",
   "Syncing…":"正在同步…", "Sync complete":"同步完成",
   "Refreshing…":"正在刷新…", "Task list refreshed":"任务列表已刷新",
   "Habit list refreshed":"习惯列表已刷新", "Refresh failed. Try again.":"刷新失败，请重试。",

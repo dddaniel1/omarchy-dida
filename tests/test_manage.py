@@ -68,6 +68,16 @@ class Management(unittest.TestCase):
         self.run_action("batch", "edit", "--project", "p", "--ids", "t", "--end", "tomorrow", client=client)
         self.assertEqual(client.batch_tasks.call_args.kwargs["update"][0]["priority"], 5)
 
+    def test_habit_unit_can_be_cleared_or_preserved(self):
+        for flags, expected in (([], "cups"), (["--unit", ""], "")):
+            with self.subTest(flags=flags):
+                client = Mock()
+                client.habit.return_value = {"id": "h", "unit": "cups", "reminders": ["09:00"]}
+                client.update_habit.return_value = {"id": "h"}
+                self.run_action("habit", "edit", "--id", "h", "--name", "Water", *flags, client=client)
+                self.assertEqual(client.update_habit.call_args.kwargs["unit"], expected)
+                self.assertEqual(client.update_habit.call_args.kwargs["reminders"], ["09:00"])
+
     def test_habit_accepts_human_repeat_preset(self):
         client = Mock()
         client.create_habit.return_value = {"id": "h"}
