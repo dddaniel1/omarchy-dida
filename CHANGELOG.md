@@ -6,6 +6,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- Stop automatically adopting credentials from another TickTick CLI. The plugin now
+  requires an explicit sign-in, preventing international TickTick tokens from being
+  sent to Dida365 during widget startup (marketplace review #11806).
+
 ## [1.0.4] - 2026-10-16
 
 ### Added

@@ -188,10 +188,9 @@ anything in `argv` is readable by every process on the machine through
 `0600`. Nothing is sent anywhere except the API host you signed in against
 (`api.dida365.com` by default).
 
-**Already signed in to [TickTick's own CLI](https://www.npmjs.com/package/@ticktick/ticktick-cli)?**
-Then you are already signed in here — its token is picked up automatically from
-`~/.config/ticktick-cli/config.json`. That file is only ever read, never written, and
-`ticktick logout` stops the borrowing for good.
+**Sign in to this plugin explicitly**, even if another TickTick CLI is already
+signed in. Credentials from `~/.config/ticktick-cli/config.json` are never read or
+reused: TickTick and Dida365 have separate accounts and tokens.
 
 <details>
 <summary>Using the international TickTick instead of Dida365?</summary>

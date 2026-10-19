@@ -1,6 +1,6 @@
 """Credential store: ``$XDG_CONFIG_HOME/ticktick/credentials.json``, mode 0600.
 
-Stored keys: ``access_token auth_method auth_source adopt_external api_base client_id
+Stored keys: ``access_token auth_method api_base client_id
 client_secret redirect_uri expires_at inbox_id project_cache``. The file holds a
 long-lived bearer token, so writes are atomic and the permissions are set before the
 file is ever reachable under its final name.
@@ -33,23 +33,11 @@ CONFIG_PATH: pathlib.Path = CONFIG_DIR / "credentials.json"
 PROJECT_CACHE_MAX = 500
 
 
-#: Other tools on this machine that hold a TickTick bearer token for the same user.
-#: Only read, never written. `@ticktick/ticktick-cli` is TickTick's own CLI.
-EXTERNAL_TOKEN_PATHS = (
-    (pathlib.Path(_XDG) if _XDG else pathlib.Path.home() / ".config")
-    / "ticktick-cli" / "config.json",
-)
-
-
 def load() -> dict:
     """Return the stored config, or ``{}`` when it is absent, unreadable or malformed.
 
-    When nothing is signed in here but TickTick's own CLI is signed in on this
-    machine, its token is borrowed. Both tools authenticate the same user against the
-    same API with the same kind of bearer token, so asking again would be busywork —
-    someone who already ran `ticktick auth login` should find the widget already
-    working. The other tool's file is never modified, and `logout` sets a flag that
-    stops the borrowing so signing out stays signed out.
+    Only this plugin's explicitly stored credentials are used. TickTick and
+    Dida365 are separate services; another tool's token has no trusted origin here.
     """
     try:
         raw = CONFIG_PATH.read_text(encoding="utf-8")
@@ -59,38 +47,7 @@ def load() -> dict:
     # A file containing `null` or `[]` is as useless as a missing one.
     cfg = data if isinstance(data, dict) else {}
 
-    if not cfg.get("access_token") and cfg.get("adopt_external") is not False:
-        token, source = external_token()
-        if token:
-            cfg["access_token"] = token
-            cfg["auth_method"] = "adopted"
-            cfg["auth_source"] = source
-            # Borrowed, not taken. `save` strips these again, so the token is never
-            # copied into this tool's own file: it stays a live mirror of the other
-            # one, and revoking there revokes here. Without this marker the next
-            # incidental `save` — updating the Inbox id, say — would quietly make a
-            # permanent copy that outlives the other tool's logout.
-            #
-            # The borrowed *value*, not a boolean: `save` has to tell "still the token
-            # we borrowed" from "the user has since signed in properly". A flag cannot,
-            # and stripped every freshly stored token, so `login` and `auth` reported
-            # success and changed nothing.
-            cfg["_adopted"] = token
     return cfg
-
-
-def external_token() -> tuple[str, str]:
-    """A bearer token another TickTick tool has stored, as ``(token, source)``."""
-    for path in EXTERNAL_TOKEN_PATHS:
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError, UnicodeDecodeError):
-            continue
-        if isinstance(data, dict):
-            token = str(data.get("access_token") or "").strip()
-            if token:
-                return token, str(path)
-    return "", ""
 
 
 def save(cfg: dict) -> None:
@@ -100,14 +57,6 @@ def save(cfg: dict) -> None:
     rename: readers see either the old file or the new one, never a truncated token.
     """
     body = {k: v for k, v in cfg.items() if not k.startswith("_")}
-    if cfg.get("_adopted") and cfg.get("access_token") == cfg["_adopted"]:
-        # See `load`: a borrowed credential is never written down here. The equality
-        # test is what makes signing in still work — an explicit `login` or `auth`
-        # replaces `access_token` with something that is no longer the borrowed value,
-        # and that one must be persisted.
-        for key in ("access_token", "auth_method", "auth_source"):
-            body.pop(key, None)
-
     CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     fd, tmp = tempfile.mkstemp(
         dir=str(CONFIG_PATH.parent), prefix=".credentials-", suffix=".tmp"
@@ -189,9 +138,7 @@ def cache_project(cfg: dict, task_id: str, project_id: str) -> None:
 __all__ = [
     "CONFIG_DIR",
     "CONFIG_PATH",
-    "EXTERNAL_TOKEN_PATHS",
     "PROJECT_CACHE_MAX",
-    "external_token",
     "load",
     "save",
     "token",

@@ -281,8 +281,7 @@ def logout() -> bool:
     for key in ("access_token", "expires_at", "client_secret", "auth_method",
                 "auth_source", "scope"):
         cfg.pop(key, None)
-    # Otherwise `load()` would borrow the other tool's token straight back and the
-    # user would appear to still be signed in immediately after signing out.
+    # Keep older plugin versions from adopting an external token after a downgrade.
     cfg["adopt_external"] = False
     _config.save(cfg)
     return had

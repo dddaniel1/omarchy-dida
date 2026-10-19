@@ -1,5 +1,5 @@
-"""The features test_e2e.py does not reach: tags, subtasks, start dates, borrowed
-credentials, the text renderer, and project groups.
+"""The features test_e2e.py does not reach: tags, subtasks, start dates, the text
+renderer, and project groups.
 
 Anything that needs an account runs against the same fake server and the same temp
 credential/state paths as the end-to-end suite, by borrowing its `Base`. The rest is
@@ -139,65 +139,6 @@ class RowShapeTest(unittest.TestCase):
         self.assertEqual(item["parentId"], "")
         self.assertEqual(item["start"], 0)
         self.assertEqual(item["startLabel"], "")
-
-
-# ------------------------------------------------- borrowed credentials
-
-
-class AdoptionTest(Base):
-    def setUp(self) -> None:
-        super().setUp()
-        self.external = self.tmp / "ticktick-cli" / "config.json"
-        self.external.parent.mkdir(parents=True, exist_ok=True)
-        self.external.write_text(json.dumps({"access_token": TOKEN}), encoding="utf-8")
-        # EXTERNAL_TOKEN_PATHS is computed at import from XDG_CONFIG_HOME, so pointing
-        # the environment at the temp dir now would be too late.
-        self._patch(config, "EXTERNAL_TOKEN_PATHS", (self.external,))
-
-    def test_a_token_another_ticktick_tool_stored_signs_us_in(self):
-        self.fake.add_task(title="borrowed", projectId="p-work")
-        cfg = config.load()
-        self.assertEqual(cfg["access_token"], TOKEN)
-        self.assertEqual(cfg["auth_method"], "adopted")
-        self.assertEqual(cfg["auth_source"], str(self.external))
-        self.assertIn("borrowed",
-                      self.titles("tasks", "--view", "all", "--include-undated", "--refresh"))
-
-    def test_logout_stops_the_borrowing_and_leaves_the_other_tool_alone(self):
-        self.ok("logout")
-        cfg = config.load()
-        self.assertIs(cfg["adopt_external"], False)
-        self.assertNotIn("access_token", cfg)
-        self.assertIs(self.ok("status")["authed"], False)
-        self.assertIn(TOKEN, self.external.read_text(encoding="utf-8"),
-                      "the other tool's file is read, never written")
-
-    def test_an_explicit_login_clears_the_flag_logout_set(self):
-        self.ok("logout")
-        self.login()
-        self.assertNotIn("adopt_external", config.load())
-
-    def test_signing_in_over_a_borrowed_token_actually_stores_the_new_one(self):
-        # The marker that stops a borrowed token being written down must not also
-        # discard one the user deliberately signed in with — that made `login` and
-        # `auth` report success and change nothing at all.
-        own = "own-token-9876543210abcdef"
-        config.save({**config.load(), "access_token": own, "auth_method": "token"})
-        stored = json.loads(config.CONFIG_PATH.read_text(encoding="utf-8"))
-        self.assertEqual(stored.get("access_token"), own,
-                         "the credential file kept the borrowed token instead of the new one")
-        self.assertEqual(stored.get("auth_method"), "token")
-
-    def test_an_incidental_save_still_does_not_write_down_the_borrowed_token(self):
-        # The other half of the same rule: saving something unrelated — the Inbox id —
-        # must leave the borrowing a live mirror rather than making a permanent copy.
-        cfg = config.load()
-        self.assertEqual(cfg["access_token"], TOKEN)
-        cfg["inbox_id"] = "inbox777"
-        config.save(cfg)
-        stored = json.loads(config.CONFIG_PATH.read_text(encoding="utf-8"))
-        self.assertEqual(stored.get("inbox_id"), "inbox777")
-        self.assertNotIn("access_token", stored)
 
 
 # -------------------------------------------------------------- render
