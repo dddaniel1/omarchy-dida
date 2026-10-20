@@ -2389,9 +2389,25 @@ def main(argv: list[str] | None = None) -> int:
         except (AttributeError, OSError, ValueError):
             pass  # already wrapped by a test, or not reconfigurable; not fatal
 
+    raw_argv = list(sys.argv[1:] if argv is None else argv)
+    if raw_argv and raw_argv[0] == "request":
+        # QML passes the real argv as JSON on stdin so task text never reaches
+        # `/proc/<pid>/cmdline`, which is readable by other local users.
+        if len(raw_argv) != 1:
+            return _fail(UsageError("request takes no command-line arguments"))
+        try:
+            request = json.load(sys.stdin)
+        except (ValueError, OSError):
+            return _fail(UsageError("request expects one JSON object on stdin"))
+        if (not isinstance(request, dict) or set(request) != {"argv"}
+                or not isinstance(request["argv"], list)
+                or not all(isinstance(item, str) for item in request["argv"])):
+            return _fail(UsageError('request expects {"argv": [strings]} on stdin'))
+        raw_argv = request["argv"]
+
     parser = _build_parser()
     try:
-        args = parser.parse_args(list(sys.argv[1:] if argv is None else argv))
+        args = parser.parse_args(raw_argv)
     except UsageError as exc:
         return _fail(exc)
 

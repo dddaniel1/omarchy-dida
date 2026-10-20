@@ -16,7 +16,7 @@
 │                    │                                                │
 └────────────────────┼────────────────────────────────────────────────┘
                      │  Quickshell Process + StdioCollector
-                     │  argv in, exactly one JSON object out
+                     │  fixed argv, request JSON on stdin, one JSON object out
                      ▼
               bin/ticktick                    (stdlib Python 3.11+)
                      │
@@ -181,24 +181,34 @@ console to see their own todos. `ticktick auth` keeps the browser flow for those
 
 The token is read from **stdin, never argv**. Anything in argv is world-readable through
 `/proc/<pid>/cmdline` for as long as the process lives, and this token is a full account
-credential. `Service.qml` enables stdin on the sign-in `Process` only, writes the token, then
-closes stdin so the helper's `read()` returns instead of blocking until its timeout.
+credential. `Service.qml` writes the token to a dedicated sign-in `Process`, then closes
+stdin so the helper's `read()` returns instead of blocking until its timeout.
+
+The same exposure applies to task content. Titles, notes, checklist items, search terms,
+quick-add drafts and account-management form values are private too, so every regular
+helper call goes through `HelperProcess.qml`. It always launches
+`python3 <helper> request` and writes the real argv as `{"argv": [...]}` on stdin. The
+CLI's internal `request` verb parses that JSON before handing the arguments to argparse;
+it accepts nothing else on the command line. Only the fixed `request` transport and the
+token `login` call are allowed to construct a helper command line.
 
 `login` verifies the token with one cheap read before storing anything. An unverified token
 would move the failure from sign-in, where it can be explained, to the next refresh, where it
 surfaces as an empty widget.
 
-If nothing is signed in here but TickTick's own CLI is signed in on this machine
-(`~/.config/ticktick-cli/config.json`), its token is borrowed. Both tools authenticate the same
-user against the same API with the same kind of token, so asking again would be busywork. That
-file is only ever read. `logout` records `adopt_external: false` so that signing out stays
-signed out rather than silently re-borrowing on the next call.
+Nothing is signed in implicitly. Credentials from another TickTick CLI
+(`~/.config/ticktick-cli/config.json`) are never read or reused: TickTick and Dida365
+have separate accounts and tokens. An explicit sign-in is required, and `logout`
+records `adopt_external: false` so an older plugin version cannot start borrowing an
+external token after a downgrade.
 
 ## Service.qml
 
-- **Four `Process` objects** — reads, writes, sign-in and the quick-add parse preview — so a
-  slow refresh never blocks a click, a pasted token is never queued behind a poll, and a preview
-  can neither wait for nor cancel a write. Only the sign-in process has stdin enabled.
+- **Dedicated `HelperProcess` slots** — reads, writes, sign-in, tags, habits, stats, focus,
+  countdowns, management and the quick-add parse preview — so a slow refresh never blocks a
+  click, a pasted token is never queued behind a poll, and a preview can neither wait for nor
+  cancel a write. Every regular slot uses the fixed `request` command and sends its real argv
+  on stdin; the sign-in slot writes only the token there.
 - **A serialized write queue.** Two fast clicks must not race one process slot; actions queue,
   pump on exit through `Qt.callLater`, and trigger a single refresh when the queue drains.
 - **Optimistic updates.** Complete, delete, priority and checklist toggles mutate the local list

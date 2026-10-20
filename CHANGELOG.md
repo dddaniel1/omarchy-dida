@@ -11,6 +11,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Stop automatically adopting credentials from another TickTick CLI. The plugin now
   requires an explicit sign-in, preventing international TickTick tokens from being
   sent to Dida365 during widget startup (marketplace review #11806).
+- Keep task titles, notes, search terms, quick-add drafts, and management form values
+  out of process command lines. The widget now starts every helper request with a
+  fixed command and sends the real arguments over stdin, so other local users cannot
+  read private task content from `/proc/<pid>/cmdline` (marketplace review #11806).
 
 ## [1.0.4] - 2026-10-16
 

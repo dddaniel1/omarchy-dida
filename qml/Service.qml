@@ -20,7 +20,8 @@ Item {
   property var tags: []
   property int countdownCount: 0
   function loadCountdownCount() {
-    if (!countdownProcess.running) countdownProcess.running = true
+    if (!countdownProcess.running)
+      countdownProcess.startRequest(["manage", "countdown", "list"])
   }
   property var management: ({})
   property string managementError: ""
@@ -38,8 +39,7 @@ Item {
     managementError = ""
     var next = _managementQueue.shift()
     managementProcess.scope = next.scope
-    managementProcess.command = ["python3", helperPath, "manage"].concat(next.args)
-    managementProcess.running = true
+    managementProcess.startRequest(["manage"].concat(next.args))
   }
   // Habits are a second endpoint with their own cache clock, so they get their own
   // properties and their own process rather than riding the task read.
@@ -222,8 +222,7 @@ Item {
       return
     }
     refreshing = true
-    readProcess.command = ["python3", helperPath].concat(readArgs())
-    readProcess.running = true
+    readProcess.startRequest(readArgs())
   }
 
   function readArgs() {
@@ -649,8 +648,7 @@ Item {
   // whenever a write settles, because that is when a new one can have appeared.
   function loadTags() {
     if (tagsProcess.running) return
-    tagsProcess.command = ["python3", helperPath, "tags"]
-    tagsProcess.running = true
+    tagsProcess.startRequest(["tags"])
   }
 
   // Habits, read on entering the Habits view and whenever a write settles. Their own
@@ -659,9 +657,9 @@ Item {
   function loadHabits(notify) {
     if (notify === true && showHabits) manualHabitRefresh = true
     if (habitsProcess.running || !showHabits) return
-    habitsProcess.command = ["python3", helperPath, "habits"]
-    if (manualHabitRefresh) habitsProcess.command.push("--refresh")
-    habitsProcess.running = true
+    var args = ["habits"]
+    if (manualHabitRefresh) args.push("--refresh")
+    habitsProcess.startRequest(args)
   }
 
   function applyHabits(payload) {
@@ -693,9 +691,9 @@ Item {
   function loadStats(force) {
     if (statsProcess.running || !showStats) return
     statsError = ""
-    statsProcess.command = ["python3", helperPath, "stats", "--days", String(completedDays)]
-    if (force === true) statsProcess.command = statsProcess.command.concat(["--refresh"])
-    statsProcess.running = true
+    var args = ["stats", "--days", String(completedDays)]
+    if (force === true) args.push("--refresh")
+    statsProcess.startRequest(args)
   }
 
   function applyStats(payload) {
@@ -739,8 +737,7 @@ Item {
     // A poll that only needs the clock can say "do not go to the network for the
     // tally"; a real read leaves it to the helper's own default.
     if (Number(maxAge) > 0) args = args.concat(["--max-age", String(maxAge)])
-    focusProcess.command = ["python3", helperPath].concat(args)
-    focusProcess.running = true
+    focusProcess.startRequest(args)
   }
 
   function applyFocus(payload) {
@@ -771,8 +768,7 @@ Item {
       if (task) args = args.concat(["--task-id", String(task.id),
         "--task-title", Model.squish(task.title) || "Untitled task"])
     }
-    focusProcess.command = ["python3", helperPath].concat(args)
-    focusProcess.running = true
+    focusProcess.startRequest(args)
   }
 
   readonly property bool focusBusy: focusProcess.running
@@ -895,8 +891,7 @@ Item {
 
   function pump() {
     if (actionProcess.running || _queue.length === 0) return
-    actionProcess.command = ["python3", helperPath].concat(_queue.shift())
-    actionProcess.running = true
+    actionProcess.startRequest(_queue.shift())
   }
 
   function toast(text) {
@@ -1002,9 +997,9 @@ Item {
     running: root.authed
     onTriggered: root.loadCountdownCount()
   }
-  Process {
+  HelperProcess {
     id: countdownProcess
-    command: ["python3", root.helperPath, "manage", "countdown", "list"]
+    helperPath: root.helperPath
     stdout: StdioCollector { id: countdownOut; waitForEnd: true }
     onExited: {
       var payload = root.payloadOf(countdownOut.text)
@@ -1088,8 +1083,7 @@ Item {
       }
       if (pending === "") return
       parseProcess.forText = pending
-      parseProcess.command = ["python3", root.helperPath, "parse", pending]
-      parseProcess.running = true
+      parseProcess.startRequest(["parse", pending])
     }
   }
 
@@ -1112,8 +1106,9 @@ Item {
     }
   }
 
-  Process {
+  HelperProcess {
     id: managementProcess
+    helperPath: root.helperPath
     property int scope: 0
     stdout: StdioCollector { id: managementOut; waitForEnd: true }
     stderr: StdioCollector { id: managementErr; waitForEnd: true }
@@ -1133,17 +1128,17 @@ Item {
       } else {
         var message = root.messageOf(payload, managementErr.text, "Could not load. Try again.")
         if (currentScope) root.managementError = message
-        else if (managementProcess.command[4] !== "list" && managementProcess.command[4] !== "get") root.toast(message)
+        else if (managementProcess.lastArgs[2] !== "list" && managementProcess.lastArgs[2] !== "get") root.toast(message)
         if (payload.error === "auth") root.authed=false
       }
       Qt.callLater(root.pumpManagement)
     }
   }
 
-  Process {
+  HelperProcess {
     id: readProcess
+    helperPath: root.helperPath
     running: false
-    command: []
     stdout: StdioCollector { id: readOut; waitForEnd: true }
     stderr: StdioCollector { id: readErr; waitForEnd: true }
     onExited: function () {
@@ -1163,15 +1158,15 @@ Item {
     }
   }
 
-  Process {
+  HelperProcess {
     id: actionProcess
+    helperPath: root.helperPath
     running: false
-    command: []
     stdout: StdioCollector { id: actionOut; waitForEnd: true }
     stderr: StdioCollector { id: actionErr; waitForEnd: true }
     onExited: function () {
       root.applyAction(String(actionOut.text || ""), String(actionErr.text || ""))
-      if (command[2] === "sync") {
+      if (lastArgs[0] === "sync") {
         var payload = root.payloadOf(String(actionOut.text || ""))
         if (payload && payload.ok === true && !payload.warning) root.toast("Sync complete")
       }
@@ -1220,12 +1215,12 @@ Item {
     }
   }
 
-  Process {
+  HelperProcess {
     // Its own slot for the same reason the preview has one: a tag list is
     // decoration and must never delay a click.
     id: tagsProcess
+    helperPath: root.helperPath
     running: false
-    command: []
     stdout: StdioCollector { id: tagsOut; waitForEnd: true }
     onExited: function () {
       var payload = root.payloadOf(String(tagsOut.text || ""))
@@ -1234,12 +1229,12 @@ Item {
     }
   }
 
-  Process {
+  HelperProcess {
     // Habits: a second endpoint on a second clock. Shared with nothing, so a slow
     // habit fetch cannot hold up a task poll and a task poll cannot delay a check-in.
     id: habitsProcess
+    helperPath: root.helperPath
     running: false
-    command: []
     stdout: StdioCollector { id: habitsOut; waitForEnd: true }
     onExited: function () {
       var payload = root.payloadOf(String(habitsOut.text || ""))
@@ -1253,13 +1248,13 @@ Item {
     }
   }
 
-  Process {
+  HelperProcess {
     // Stats: a dashboard on its own slot, fetched only while its view is open. Its own
     // process for the same reason habits have one — a stats read is several endpoints
     // and must never sit in front of a task poll.
     id: statsProcess
+    helperPath: root.helperPath
     running: false
-    command: []
     stdout: StdioCollector { id: statsOut; waitForEnd: true }
     onExited: function () {
       var payload = root.payloadOf(String(statsOut.text || ""))
@@ -1268,13 +1263,13 @@ Item {
     }
   }
 
-  Process {
+  HelperProcess {
     // Every focus transition, including the ones the countdown fires. Reads and
     // writes share the slot deliberately: two transitions racing here would move the
     // timer on twice, and the countdown retries anyway if a call is dropped.
     id: focusProcess
+    helperPath: root.helperPath
     running: false
-    command: []
     stdout: StdioCollector { id: focusOut; waitForEnd: true }
     onExited: function () {
       var payload = root.payloadOf(String(focusOut.text || ""))
@@ -1283,11 +1278,11 @@ Item {
     }
   }
 
-  Process {
+  HelperProcess {
     // Its own slot: the preview must never wait behind a write, nor cancel one.
     id: parseProcess
+    helperPath: root.helperPath
     running: false
-    command: []
     stdout: StdioCollector { id: parseOut; waitForEnd: true }
     property string forText: ""
     onExited: function () {
